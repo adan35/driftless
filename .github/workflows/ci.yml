@@ -20,6 +20,9 @@ jobs:
           java-version: "21"
           cache: maven
 
+      - name: Make mvnw executable
+        run: chmod +x mvnw
+
       - name: Build and verify (compile + tests + quality gates)
         # No -q: keep the reactor summary and the property-stub "Skipped: 1" line
         # visible in CI logs, so the wired-but-inert zero-drift gate is provable.
