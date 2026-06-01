@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>io.driftless</groupId>
+		<artifactId>driftless-parent</artifactId>
+		<version>0.0.1-SNAPSHOT</version>
+	</parent>
+
+	<artifactId>ledger</artifactId>
+	<name>ledger</name>
+	<description>Double-entry journal core. Spec 00 publishes the FROZEN public contract only;
+		Spec 01 owns the implementation.</description>
+
+	<!--
+	    Strictly inward dependency direction: ledger depends ONLY on common.
+	    No JPA, no SQL, no Spring here at Spec 00 — this module is the frozen api/spi contract.
+	-->
+	<dependencies>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>common</artifactId>
+		</dependency>
+	</dependencies>
+
+	<!--
+	    No JaCoCo coverage floor: at Spec 00 this module is interfaces + records with zero
+	    coverable logic, so any minimum would fail the foundation gate. Spec 01 adds the
+	    implementation and raises the floor.
+	-->
+
+</project>

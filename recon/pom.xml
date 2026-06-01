@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>io.driftless</groupId>
+		<artifactId>driftless-parent</artifactId>
+		<version>0.0.1-SNAPSHOT</version>
+	</parent>
+
+	<artifactId>recon</artifactId>
+	<name>recon</name>
+	<description>Reconciliation + load gen + fault harness + the zero-drift property test (Spec 07).
+		Scaffold at Spec 00: hosts the disabled property-test stub and its jqwik engine.</description>
+
+	<dependencies>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>common</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>ledger</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!--
+		    jqwik powers the property-based zero-drift gate. Wired now so the engine is on the
+		    classpath and the (disabled) stub is discovered; Spec 07 fills the property in.
+		-->
+		<dependency>
+			<groupId>net.jqwik</groupId>
+			<artifactId>jqwik</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+</project>

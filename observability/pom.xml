@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>io.driftless</groupId>
+		<artifactId>driftless-parent</artifactId>
+		<version>0.0.1-SNAPSHOT</version>
+	</parent>
+
+	<artifactId>observability</artifactId>
+	<name>observability</name>
+	<description>Metrics wiring + dashboard provisioning (Spec 08). Scaffold only at Spec 00.</description>
+
+	<!--
+	    Observability wires metrics, not money math, so it depends on common only.
+	    Real code (Micrometer/Prometheus) is owned by Spec 08.
+	-->
+	<dependencies>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>common</artifactId>
+		</dependency>
+	</dependencies>
+
+</project>

@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>io.driftless</groupId>
+		<artifactId>driftless-parent</artifactId>
+		<version>0.0.1-SNAPSHOT</version>
+	</parent>
+
+	<artifactId>app</artifactId>
+	<name>app</name>
+	<description>Spring Boot bootstrap: wires every feature module and exposes the REST API.
+		The runnable modular-monolith boot jar.</description>
+
+	<dependencies>
+		<!-- app is the only module that depends on all features; this encodes the monolith wiring. -->
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>common</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>ledger</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>idempotency</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>auth</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>rules</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>tokens</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>recon</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>observability</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webmvc</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+			<optional>true</optional>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webmvc-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<!-- Only app and partner-simulator repackage into runnable boot jars. -->
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+				<configuration>
+					<excludes>
+						<exclude>
+							<groupId>org.projectlombok</groupId>
+							<artifactId>lombok</artifactId>
+						</exclude>
+					</excludes>
+				</configuration>
+				<executions>
+					<execution>
+						<goals>
+							<goal>repackage</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+
+</project>
