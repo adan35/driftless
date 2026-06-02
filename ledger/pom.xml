@@ -11,24 +11,213 @@
 
 	<artifactId>ledger</artifactId>
 	<name>ledger</name>
-	<description>Double-entry journal core. Spec 00 publishes the FROZEN public contract only;
-		Spec 01 owns the implementation.</description>
+	<description>Double-entry journal core. Publishes the FROZEN public contract (api/spi) and, per
+		Spec 01, the append-only, balance-by-summation implementation behind it.</description>
 
 	<!--
-	    Strictly inward dependency direction: ledger depends ONLY on common.
-	    No JPA, no SQL, no Spring here at Spec 00 — this module is the frozen api/spi contract.
+	    Strictly inward dependency direction: ledger depends ONLY on common (plus its own
+	    persistence runtime). It must not depend on any other feature module.
 	-->
 	<dependencies>
 		<dependency>
 			<groupId>io.driftless</groupId>
 			<artifactId>common</artifactId>
 		</dependency>
+
+		<!-- Spec 01 implementation: Spring Data JPA + Flyway + PostgreSQL. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-jpa</artifactId>
+		</dependency>
+		<!--
+		    Spring Boot 4 modularized auto-configuration: Flyway autoconfig lives in the dedicated
+		    spring-boot-flyway module, pulled in by this starter (which also brings flyway-core).
+		    Plain flyway-core alone is NOT auto-configured in Boot 4, so the starter is required.
+		-->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-flyway</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+			<optional>true</optional>
+		</dependency>
+
+		<!-- Integration tests run against real Postgres via Testcontainers + @ServiceConnection. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-testcontainers</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!--
+		    Testcontainers 2.x (managed at 2.0.5 by the Spring Boot 4.0.6 BOM) renamed its modules to
+		    the `testcontainers-*` prefix; the Spec 01 brief named the 1.x coordinates
+		    (org.testcontainers:postgresql / :junit-jupiter). These are the BOM-managed 2.x names.
+		-->
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-postgresql</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-junit-jupiter</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!--
+		    jqwik seeds the zero-drift property gate (Spec 07 owns the canonical version). Version is
+		    intentionally managed by the parent dependencyManagement (jqwik.version).
+		-->
+		<dependency>
+			<groupId>net.jqwik</groupId>
+			<artifactId>jqwik</artifactId>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
 
-	<!--
-	    No JaCoCo coverage floor: at Spec 00 this module is interfaces + records with zero
-	    coverable logic, so any minimum would fail the foundation gate. Spec 01 adds the
-	    implementation and raises the floor.
-	-->
+	<build>
+		<plugins>
+			<!--
+			    Integration tests (Testcontainers Postgres) are named *IT and run under Failsafe at
+			    `verify`; the unit/property tests (*Test) run under Surefire at `test`. JaCoCo's
+			    agent argLine is appended so coverage spans both phases.
+			-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-failsafe-plugin</artifactId>
+				<configuration>
+					<!-- Run the JaCoCo agent during integration tests (set by prepare-agent-integration). -->
+					<argLine>${failsafeArgLine}</argLine>
+				</configuration>
+				<executions>
+					<execution>
+						<id>integration-tests</id>
+						<goals>
+							<goal>integration-test</goal>
+							<goal>verify</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+
+			<!--
+			    The api/spi packages are frozen records/enums/interfaces with no coverable logic; a
+			    floor over them would punish the contract, so the gate is focused on the Spec 01
+			    implementation package (io.driftless.ledger.internal). With the implementation in
+			    place this floor is now enforced (raised from Spec 00's report-only stance).
+			-->
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<executions>
+					<!--
+					    Surefire (unit/property) coverage. The inherited `jacoco-prepare` writes
+					    target/jacoco.exec and sets ${argLine}; redeclared here for clarity.
+					-->
+					<execution>
+						<id>jacoco-prepare</id>
+						<goals>
+							<goal>prepare-agent</goal>
+						</goals>
+						<configuration>
+							<destFile>${project.build.directory}/jacoco.exec</destFile>
+						</configuration>
+					</execution>
+					<!-- Failsafe (integration) coverage into a distinct exec file. -->
+					<execution>
+						<id>jacoco-prepare-it</id>
+						<goals>
+							<goal>prepare-agent-integration</goal>
+						</goals>
+						<configuration>
+							<destFile>${project.build.directory}/jacoco-it.exec</destFile>
+							<propertyName>failsafeArgLine</propertyName>
+						</configuration>
+					</execution>
+					<!-- Merge unit + integration exec data before reporting/checking. -->
+					<execution>
+						<id>jacoco-merge</id>
+						<phase>post-integration-test</phase>
+						<goals>
+							<goal>merge</goal>
+						</goals>
+						<configuration>
+							<fileSets>
+								<fileSet>
+									<directory>${project.build.directory}</directory>
+									<includes>
+										<include>jacoco.exec</include>
+										<include>jacoco-it.exec</include>
+									</includes>
+								</fileSet>
+							</fileSets>
+							<destFile>${project.build.directory}/jacoco-merged.exec</destFile>
+						</configuration>
+					</execution>
+					<!-- Human-readable report over the merged data. -->
+					<execution>
+						<id>jacoco-report</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+						<configuration>
+							<dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
+						</configuration>
+					</execution>
+					<!--
+					    Enforced floor over the Spec 01 implementation package only (the frozen
+					    api/spi records/enums/interfaces carry no coverable logic).
+					-->
+					<execution>
+						<id>jacoco-check</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+						<configuration>
+							<dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
+							<rules>
+								<rule>
+									<element>BUNDLE</element>
+									<includes>
+										<include>io.driftless.ledger.internal.*</include>
+									</includes>
+									<limits>
+										<limit>
+											<counter>LINE</counter>
+											<value>COVEREDRATIO</value>
+											<minimum>0.85</minimum>
+										</limit>
+										<limit>
+											<counter>BRANCH</counter>
+											<value>COVEREDRATIO</value>
+											<minimum>0.80</minimum>
+										</limit>
+									</limits>
+								</rule>
+							</rules>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
 
 </project>

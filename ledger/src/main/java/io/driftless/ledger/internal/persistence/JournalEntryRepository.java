@@ -1,0 +1,61 @@
+package io.driftless.ledger.internal.persistence;
+
+import io.driftless.ledger.api.Direction;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+/**
+ * Spring Data access to the append-only {@code journal_entry} table.
+ *
+ * <p>This repository is read/insert only — it deliberately exposes no {@code update}/{@code delete}
+ * derived methods, honoring the immutability invariant at the application layer (the database
+ * trigger from migration {@code V2} backs it up). Balance is computed here by summation, never
+ * stored.
+ */
+public interface JournalEntryRepository extends JpaRepository<JournalEntryEntity, UUID> {
+
+    /**
+     * Net posted balance for one account and currency, in minor units: the sum of debit legs minus
+     * the sum of credit legs. Returns {@code 0} when the account has no entries. The sign convention
+     * (debits positive) lives in the ledger, mirroring {@link Direction}.
+     */
+    @Query(
+            """
+            SELECT COALESCE(SUM(CASE WHEN e.direction = io.driftless.ledger.api.Direction.DEBIT
+                                     THEN e.amountMinor ELSE -e.amountMinor END), 0)
+            FROM JournalEntryEntity e
+            WHERE e.accountId = :accountId AND e.currency = :currency
+            """)
+    long netPostedMinor(@Param("accountId") UUID accountId, @Param("currency") String currency);
+
+    /** Distinct currencies that have at least one entry for the account (usually one in the MVP). */
+    @Query("SELECT DISTINCT e.currency FROM JournalEntryEntity e WHERE e.accountId = :accountId")
+    List<String> currenciesFor(@Param("accountId") UUID accountId);
+
+    /** A page of an account's entries, oldest first, for reconciliation and statements. */
+    @Query("SELECT e FROM JournalEntryEntity e WHERE e.accountId = :accountId ORDER BY e.sequenceNo ASC, e.id ASC")
+    List<JournalEntryEntity> findPageForAccount(@Param("accountId") UUID accountId, Pageable pageable);
+
+    /**
+     * Signed global sum of every journal entry in a currency, in minor units (debits positive,
+     * credits negative). For a correct ledger this is always {@code 0}. Seed of the Spec 07
+     * zero-drift property; {@link Optional#empty()} when no entries exist for the currency.
+     */
+    @Query(
+            """
+            SELECT COALESCE(SUM(CASE WHEN e.direction = io.driftless.ledger.api.Direction.DEBIT
+                                     THEN e.amountMinor ELSE -e.amountMinor END), 0)
+            FROM JournalEntryEntity e
+            WHERE e.currency = :currency
+            """)
+    long globalSignedSumMinor(@Param("currency") String currency);
+
+    /** All distinct currencies that appear anywhere in the journal. */
+    @Query("SELECT DISTINCT e.currency FROM JournalEntryEntity e")
+    List<String> allCurrencies();
+}
