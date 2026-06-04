@@ -34,3 +34,7 @@ build/
 
 ### Project docs (kept locally, not tracked) ###
 /docs/
+
+### Transient agent / test artifacts (kept local) ###
+.claude/*.log
+**/.jqwik-database
