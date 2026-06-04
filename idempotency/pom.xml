@@ -11,9 +11,15 @@
 
 	<artifactId>idempotency</artifactId>
 	<name>idempotency</name>
-	<description>Idempotency keys + transactional outbox (Spec 02). Scaffold only at Spec 00.</description>
+	<description>Idempotency keys + transactional outbox (Spec 02). Publishes the replay guard and the
+		exactly-once outbox spine every mutating flow reuses; implementation is DB-backed (PostgreSQL +
+		Flyway) with a crash-safe scheduled relay behind a pluggable publisher seam.</description>
 
-	<!-- Inward dependencies only; real code is owned by Spec 02. -->
+	<!--
+	    Strictly inward dependency direction: idempotency depends only on common + the frozen ledger
+	    contract (the atomicity acceptance test posts a real ledger transaction and appends an outbox
+	    event in the SAME transaction). It must not depend on any sibling feature module's internals.
+	-->
 	<dependencies>
 		<dependency>
 			<groupId>io.driftless</groupId>
@@ -23,6 +29,209 @@
 			<groupId>io.driftless</groupId>
 			<artifactId>ledger</artifactId>
 		</dependency>
+
+		<!-- Spec 02 implementation: Spring Data JPA + Flyway + PostgreSQL, plus @Scheduled relay. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-jpa</artifactId>
+		</dependency>
+		<!--
+		    Spring Boot 4 modularized auto-configuration: Flyway autoconfig lives in the dedicated
+		    spring-boot-flyway module, pulled in by this starter (which also brings flyway-core).
+		-->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-flyway</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+		<!-- Input validation on the public records (request hash / key non-blank). -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-validation</artifactId>
+		</dependency>
+		<!--
+		    The replay guard serializes/deserializes stored results as JSON for the response_blob. We
+		    depend on Jackson directly (databind + JSR-310 for Instant) and register our own
+		    ObjectMapper bean, so the library is self-sufficient and does not assume the host wired
+		    web/JSON auto-configuration. Versions are BOM-managed. (The web starter is deliberately NOT
+		    pulled in — this is a library, not a web module.)
+		-->
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>com.fasterxml.jackson.datatype</groupId>
+			<artifactId>jackson-datatype-jsr310</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+			<optional>true</optional>
+		</dependency>
+
+		<!-- Integration tests run against real Postgres via Testcontainers + @ServiceConnection. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-testcontainers</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-postgresql</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-junit-jupiter</artifactId>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
+
+	<build>
+		<plugins>
+			<!--
+			    Integration tests (Testcontainers Postgres) are named *IT and run under Failsafe at
+			    `verify`; unit tests (*Test) run under Surefire at `test`. JaCoCo's agent argLine is
+			    appended so coverage spans both phases.
+			-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-failsafe-plugin</artifactId>
+				<configuration>
+					<argLine>${failsafeArgLine}</argLine>
+				</configuration>
+				<executions>
+					<execution>
+						<id>integration-tests</id>
+						<goals>
+							<goal>integration-test</goal>
+							<goal>verify</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+
+			<!--
+			    The api packages are frozen records/interfaces with no coverable logic; the enforced
+			    floor is focused on the Spec 02 implementation packages (the guard, the outbox writer,
+			    and the crash-safe relay), mirroring how `ledger` gates io.driftless.ledger.internal.*.
+			-->
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>jacoco-prepare</id>
+						<goals>
+							<goal>prepare-agent</goal>
+						</goals>
+						<configuration>
+							<destFile>${project.build.directory}/jacoco.exec</destFile>
+						</configuration>
+					</execution>
+					<execution>
+						<id>jacoco-prepare-it</id>
+						<goals>
+							<goal>prepare-agent-integration</goal>
+						</goals>
+						<configuration>
+							<destFile>${project.build.directory}/jacoco-it.exec</destFile>
+							<propertyName>failsafeArgLine</propertyName>
+						</configuration>
+					</execution>
+					<execution>
+						<id>jacoco-merge</id>
+						<phase>post-integration-test</phase>
+						<goals>
+							<goal>merge</goal>
+						</goals>
+						<configuration>
+							<fileSets>
+								<fileSet>
+									<directory>${project.build.directory}</directory>
+									<includes>
+										<include>jacoco.exec</include>
+										<include>jacoco-it.exec</include>
+									</includes>
+								</fileSet>
+							</fileSets>
+							<destFile>${project.build.directory}/jacoco-merged.exec</destFile>
+						</configuration>
+					</execution>
+					<execution>
+						<id>jacoco-report</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+						<configuration>
+							<dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
+						</configuration>
+					</execution>
+					<!--
+					    Enforced floor over the Spec 02 implementation packages only (the frozen api
+					    records/interfaces carry no coverable logic).
+					-->
+					<execution>
+						<id>jacoco-check</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+						<configuration>
+							<dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
+							<rules>
+								<!--
+								    Enforce per-PACKAGE so the gate actually bites on each Spec 02
+								    implementation package (a BUNDLE rule with package includes matches the
+								    bundle name, not the packages, and would pass vacuously). The frozen api
+								    packages carry no coverable logic and are excluded by listing only the
+								    two internal packages. Branch floor is 0.70: the guard and relay carry
+								    deliberate defensive branches (e.g. the "committed IN_PROGRESS" path that
+								    cannot occur in the single-transaction model) that are correct to keep but
+								    not all reachable from a test; 0.70 still fails loudly if the real logic is
+								    gutted.
+								-->
+								<rule>
+									<element>PACKAGE</element>
+									<includes>
+										<include>io.driftless.idempotency.internal</include>
+										<include>io.driftless.outbox.internal</include>
+									</includes>
+									<limits>
+										<limit>
+											<counter>LINE</counter>
+											<value>COVEREDRATIO</value>
+											<minimum>0.85</minimum>
+										</limit>
+										<limit>
+											<counter>BRANCH</counter>
+											<value>COVEREDRATIO</value>
+											<minimum>0.70</minimum>
+										</limit>
+									</limits>
+								</rule>
+							</rules>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
 
 </project>

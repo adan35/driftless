@@ -11,18 +11,155 @@
 
 	<artifactId>rules</artifactId>
 	<name>rules</name>
-	<description>Hot-path limits/velocity/MCC engine (Spec 05). Scaffold only at Spec 00.</description>
+	<description>Hot-path limits/velocity/MCC rule engine (Spec 05). Pre-compiled, cached off the DB
+		path; deterministic, I/O-free evaluation with a single-digit-millisecond p99 budget.</description>
 
-	<!-- Inward dependencies only; real code is owned by Spec 05. -->
+	<properties>
+		<!--
+		    JMH is the benchmark harness for the p99 latency gate; it is not in the Spring Boot BOM,
+		    so its version is pinned here (test scope only — never shipped at runtime).
+		-->
+		<jmh.version>1.37</jmh.version>
+		<!-- Enforced line floor over the engine impl package (mirrors the project ~0.85 standard). -->
+		<coverage.line.min>0.85</coverage.line.min>
+		<coverage.branch.min>0.80</coverage.branch.min>
+	</properties>
+
+	<!--
+	    Strictly inward dependency direction. The engine needs ONLY `common` (Money, AccountId,
+	    Clock): `availableBalance` and the VelocitySnapshot are passed INTO evaluate(), so the hot
+	    path has no ledger and no datasource dependency by construction.
+	-->
 	<dependencies>
 		<dependency>
 			<groupId>io.driftless</groupId>
 			<artifactId>common</artifactId>
 		</dependency>
+
+		<!--
+		    Spring context + Boot config binding only: @ConfigurationProperties rule authoring,
+		    component wiring, scheduled off-hot-path cache refresh. No web, no data, no datasource.
+		-->
 		<dependency>
-			<groupId>io.driftless</groupId>
-			<artifactId>ledger</artifactId>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+			<optional>true</optional>
+		</dependency>
+
+		<!-- Unit + property + Spring-context tests. No Testcontainers: nothing on the hot path needs a DB. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>net.jqwik</groupId>
+			<artifactId>jqwik</artifactId>
+			<scope>test</scope>
+		</dependency>
+
+		<!-- JMH micro-benchmark harness backing the p99 latency assertion (test scope only). -->
+		<dependency>
+			<groupId>org.openjdk.jmh</groupId>
+			<artifactId>jmh-core</artifactId>
+			<version>${jmh.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.openjdk.jmh</groupId>
+			<artifactId>jmh-generator-annprocess</artifactId>
+			<version>${jmh.version}</version>
+			<scope>test</scope>
 		</dependency>
 	</dependencies>
+
+	<build>
+		<plugins>
+			<!--
+			    JMH uses its own annotation processor to generate benchmark glue. Lombok (inherited
+			    from the parent) and the JMH generator must BOTH be on the test annotation-processor
+			    path, so they are restated together here for the test sources.
+			-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<configuration>
+					<annotationProcessorPaths>
+						<path>
+							<groupId>org.projectlombok</groupId>
+							<artifactId>lombok</artifactId>
+							<version>${lombok.version}</version>
+						</path>
+					</annotationProcessorPaths>
+				</configuration>
+				<executions>
+					<execution>
+						<id>default-testCompile</id>
+						<configuration>
+							<annotationProcessorPaths>
+								<path>
+									<groupId>org.projectlombok</groupId>
+									<artifactId>lombok</artifactId>
+									<version>${lombok.version}</version>
+								</path>
+								<path>
+									<groupId>org.openjdk.jmh</groupId>
+									<artifactId>jmh-generator-annprocess</artifactId>
+									<version>${jmh.version}</version>
+								</path>
+							</annotationProcessorPaths>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+
+			<!--
+			    Enforced coverage floor scoped to the engine implementation package; the frozen api
+			    package is records/enums/an interface with no coverable logic, so gating it would
+			    punish the contract rather than the code.
+			-->
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>jacoco-check</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+						<configuration>
+							<rules>
+								<rule>
+									<element>BUNDLE</element>
+									<includes>
+										<include>io.driftless.rules.internal.*</include>
+										<include>io.driftless.rules.velocity.*</include>
+									</includes>
+									<limits>
+										<limit>
+											<counter>LINE</counter>
+											<value>COVEREDRATIO</value>
+											<minimum>${coverage.line.min}</minimum>
+										</limit>
+										<limit>
+											<counter>BRANCH</counter>
+											<value>COVEREDRATIO</value>
+											<minimum>${coverage.branch.min}</minimum>
+										</limit>
+									</limits>
+								</rule>
+							</rules>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
 
 </project>

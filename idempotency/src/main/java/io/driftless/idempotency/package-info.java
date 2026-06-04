@@ -1,7 +1,9 @@
 /**
- * Idempotency keys and the transactional outbox (Spec 02).
+ * Idempotency keys and the transactional outbox (Spec 02) — the reusable spine that gives every
+ * mutating flow its replay guarantee and exactly-once event delivery.
  *
- * <p>Scaffold at Spec 00: declares the module's package root only. The replay guard and outbox
- * implementation are owned by Spec 02 and must not be added here before then.
+ * <p>The public contracts live in {@link io.driftless.idempotency.api} (the replay guard) and {@link
+ * io.driftless.outbox.api} (the outbox writer); their DB-backed implementations live in the
+ * respective {@code internal} packages. Callers depend on the {@code api} packages only.
  */
 package io.driftless.idempotency;

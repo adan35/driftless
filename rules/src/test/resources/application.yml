@@ -1,0 +1,23 @@
+driftless:
+  rules:
+    refresh-interval: 1s
+    velocity-window: 24h
+    per-transaction-limits:
+      - rule-id: per-txn-500
+        priority: 10
+        max-amount-minor: 50000
+    periodic-caps:
+      - rule-id: daily-2000
+        priority: 20
+        cap-amount-minor: 200000
+    velocity:
+      - rule-id: vel-count-10
+        priority: 30
+        max-count: 10
+    mcc:
+      - rule-id: mcc-block-gambling
+        priority: 40
+        mode: BLOCK
+        codes:
+          - "7995"
+          - "6011"

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Test-only logging. Production keeps the INFO per-decline log on the evaluator (QA traceability);
+    in tests the property and latency suites evaluate hundreds of thousands of declining contexts, so
+    that logger is raised to WARN here to keep the build output and surefire reports readable. This
+    file is test-scoped and does not affect the running application.
+-->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${CONSOLE_LOG_PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+    <!-- Silence the high-volume per-decision decline log during bulk property/latency tests. -->
+    <logger name="io.driftless.rules.internal.RuleEvaluator" level="WARN"/>
+</configuration>

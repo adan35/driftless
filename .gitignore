@@ -31,3 +31,6 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Project docs (kept locally, not tracked) ###
+/docs/
