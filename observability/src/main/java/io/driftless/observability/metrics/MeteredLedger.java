@@ -5,6 +5,8 @@ import io.driftless.common.id.TxId;
 import io.driftless.ledger.api.Account;
 import io.driftless.ledger.api.Balance;
 import io.driftless.ledger.api.BalanceInvariantViolation;
+import io.driftless.ledger.api.EntryCursor;
+import io.driftless.ledger.api.EntryPage;
 import io.driftless.ledger.api.JournalEntry;
 import io.driftless.ledger.api.Ledger;
 import io.driftless.ledger.api.Page;
@@ -14,6 +16,7 @@ import io.driftless.ledger.api.Transaction;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * A transparent metrics decorator over the frozen {@link Ledger} contract: it counts accepted posts
@@ -59,6 +62,11 @@ public class MeteredLedger implements Ledger {
     }
 
     @Override
+    public Optional<Account> findAccount(AccountId account) {
+        return delegate.findAccount(account);
+    }
+
+    @Override
     public Balance balanceOf(AccountId account) {
         return delegate.balanceOf(account);
     }
@@ -71,5 +79,10 @@ public class MeteredLedger implements Ledger {
     @Override
     public List<JournalEntry> entriesFor(AccountId account, Page page) {
         return delegate.entriesFor(account, page);
+    }
+
+    @Override
+    public EntryPage entriesAfter(AccountId account, EntryCursor cursor, int limit) {
+        return delegate.entriesAfter(account, cursor, limit);
     }
 }

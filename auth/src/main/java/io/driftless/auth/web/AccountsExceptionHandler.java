@@ -1,12 +1,10 @@
 package io.driftless.auth.web;
 
-import io.driftless.auth.api.AuthorizationNotFound;
-import io.driftless.auth.api.IllegalAuthorizationState;
+import io.driftless.auth.api.UnknownAccountException;
 import io.driftless.common.error.DomainException;
 import io.driftless.common.money.CurrencyMismatchException;
 import io.driftless.idempotency.api.IdempotencyConflict;
 import io.driftless.ledger.api.BalanceInvariantViolation;
-import io.driftless.tokens.api.TokenNotFound;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -14,25 +12,21 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 /**
- * Centralized error mapping for the authorization endpoints, translating typed domain failures to HTTP
- * status codes (RFC 7807 {@link ProblemDetail} bodies). Every body carries a stable machine-readable
- * {@code code} (see {@link ProblemSupport}) so clients branch on the code, not the prose.
+ * Centralized error mapping for the account-lifecycle + funding + statement endpoints. Mirrors {@link
+ * AuthExceptionHandler}'s code-carrying RFC-7807 bodies (see {@link ProblemSupport}) so the whole
+ * public surface speaks the same stable {@code code} vocabulary.
  *
  * <ul>
  *   <li>{@link MissingIdempotencyKeyException} / validation errors / {@link IllegalArgumentException}
  *       → {@code 400 Bad Request}
- *   <li>{@link AuthorizationNotFound} / {@link TokenNotFound} → {@code 404 Not Found}
- *   <li>{@link IdempotencyConflict} (same key, different body) / {@link IllegalAuthorizationState}
- *       (state-machine rejection) → {@code 409 Conflict}
- *   <li>{@link BalanceInvariantViolation} / {@link CurrencyMismatchException} and any other {@link
+ *   <li>{@link UnknownAccountException} → {@code 404 Not Found} ({@code ACCOUNT_NOT_FOUND})
+ *   <li>{@link IdempotencyConflict} → {@code 409 Conflict}
+ *   <li>{@link CurrencyMismatchException} / {@link BalanceInvariantViolation} and any other {@link
  *       DomainException} → {@code 422 Unprocessable Entity}
  * </ul>
- *
- * <p>Spring selects the most specific handler, so the {@link DomainException} fallback only catches
- * domain errors not named above.
  */
-@RestControllerAdvice(assignableTypes = AuthorizationController.class)
-class AuthExceptionHandler {
+@RestControllerAdvice(assignableTypes = AccountsController.class)
+class AccountsExceptionHandler {
 
     @ExceptionHandler(MissingIdempotencyKeyException.class)
     ProblemDetail handleMissingKey(MissingIdempotencyKeyException ex) {
@@ -53,14 +47,9 @@ class AuthExceptionHandler {
         return ProblemSupport.of(HttpStatus.BAD_REQUEST, ProblemSupport.VALIDATION_FAILED, detail);
     }
 
-    @ExceptionHandler(AuthorizationNotFound.class)
-    ProblemDetail handleAuthNotFound(AuthorizationNotFound ex) {
-        return ProblemSupport.of(HttpStatus.NOT_FOUND, ProblemSupport.AUTHORIZATION_NOT_FOUND, ex.getMessage());
-    }
-
-    @ExceptionHandler(TokenNotFound.class)
-    ProblemDetail handleTokenNotFound(TokenNotFound ex) {
-        return ProblemSupport.of(HttpStatus.NOT_FOUND, ProblemSupport.TOKEN_NOT_FOUND, ex.getMessage());
+    @ExceptionHandler(UnknownAccountException.class)
+    ProblemDetail handleUnknownAccount(UnknownAccountException ex) {
+        return ProblemSupport.of(HttpStatus.NOT_FOUND, ProblemSupport.ACCOUNT_NOT_FOUND, ex.getMessage());
     }
 
     @ExceptionHandler(IdempotencyConflict.class)
@@ -68,20 +57,15 @@ class AuthExceptionHandler {
         return ProblemSupport.of(HttpStatus.CONFLICT, ProblemSupport.IDEMPOTENCY_CONFLICT, ex.getMessage());
     }
 
-    @ExceptionHandler(IllegalAuthorizationState.class)
-    ProblemDetail handleIllegalState(IllegalAuthorizationState ex) {
-        return ProblemSupport.of(HttpStatus.CONFLICT, ProblemSupport.ILLEGAL_AUTHORIZATION_STATE, ex.getMessage());
+    @ExceptionHandler(CurrencyMismatchException.class)
+    ProblemDetail handleCurrencyMismatch(CurrencyMismatchException ex) {
+        return ProblemSupport.of(HttpStatus.UNPROCESSABLE_ENTITY, ProblemSupport.CURRENCY_MISMATCH, ex.getMessage());
     }
 
     @ExceptionHandler(BalanceInvariantViolation.class)
     ProblemDetail handleUnbalanced(BalanceInvariantViolation ex) {
         return ProblemSupport.of(
                 HttpStatus.UNPROCESSABLE_ENTITY, ProblemSupport.BALANCE_INVARIANT_VIOLATION, ex.getMessage());
-    }
-
-    @ExceptionHandler(CurrencyMismatchException.class)
-    ProblemDetail handleCurrencyMismatch(CurrencyMismatchException ex) {
-        return ProblemSupport.of(HttpStatus.UNPROCESSABLE_ENTITY, ProblemSupport.CURRENCY_MISMATCH, ex.getMessage());
     }
 
     @ExceptionHandler(DomainException.class)

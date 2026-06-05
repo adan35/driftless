@@ -261,6 +261,12 @@ class MetricsUnitTest {
         }
 
         @Override
+        public java.util.Optional<io.driftless.ledger.api.Account> findAccount(
+                io.driftless.common.id.AccountId account) {
+            return java.util.Optional.empty();
+        }
+
+        @Override
         public io.driftless.ledger.api.Balance balanceOf(io.driftless.common.id.AccountId account) {
             return null;
         }
@@ -274,6 +280,12 @@ class MetricsUnitTest {
         public List<io.driftless.ledger.api.JournalEntry> entriesFor(
                 io.driftless.common.id.AccountId account, io.driftless.ledger.api.Page page) {
             return List.of();
+        }
+
+        @Override
+        public io.driftless.ledger.api.EntryPage entriesAfter(
+                io.driftless.common.id.AccountId account, io.driftless.ledger.api.EntryCursor cursor, int limit) {
+            return new io.driftless.ledger.api.EntryPage(List.of(), java.util.Optional.empty());
         }
     }
 
@@ -304,6 +316,12 @@ class MetricsUnitTest {
         }
 
         @Override
+        public java.util.Optional<io.driftless.ledger.api.Account> findAccount(
+                io.driftless.common.id.AccountId account) {
+            return java.util.Optional.empty();
+        }
+
+        @Override
         public io.driftless.ledger.api.Balance balanceOf(io.driftless.common.id.AccountId account) {
             this.lastBalanceArg = account;
             return balanceReturn;
@@ -321,6 +339,12 @@ class MetricsUnitTest {
             this.lastEntriesAccountArg = account;
             this.lastEntriesPageArg = page;
             return entriesReturn;
+        }
+
+        @Override
+        public io.driftless.ledger.api.EntryPage entriesAfter(
+                io.driftless.common.id.AccountId account, io.driftless.ledger.api.EntryCursor cursor, int limit) {
+            return new io.driftless.ledger.api.EntryPage(entriesReturn, java.util.Optional.empty());
         }
     }
 }

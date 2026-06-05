@@ -53,6 +53,15 @@ public class JournalEntryEntity {
     @Column(name = "sequence_no", nullable = false, updatable = false)
     private int sequenceNo;
 
+    /**
+     * Global, strictly-monotonic insertion sequence assigned by the database ({@code entry_seq}
+     * DEFAULT {@code nextval}, migration {@code V3}). It is the stable sort key for keyset (seek)
+     * pagination: immutable, unique, and always greater for a later-appended row. Database-generated,
+     * so it is read-only to the mapping ({@code insertable=false}) — never set in application code.
+     */
+    @Column(name = "entry_seq", insertable = false, updatable = false)
+    private long entrySeq;
+
     public JournalEntryEntity(
             UUID id,
             TransactionEntity transaction,

@@ -26,12 +26,12 @@ class TokenExceptionHandler {
 
     @ExceptionHandler(MissingIdempotencyKeyException.class)
     ProblemDetail handleMissingKey(MissingIdempotencyKeyException ex) {
-        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+        return ProblemSupport.of(HttpStatus.BAD_REQUEST, ProblemSupport.MISSING_IDEMPOTENCY_KEY, ex.getMessage());
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
     ProblemDetail handleIllegalArgument(IllegalArgumentException ex) {
-        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+        return ProblemSupport.of(HttpStatus.BAD_REQUEST, ProblemSupport.VALIDATION_FAILED, ex.getMessage());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -40,21 +40,22 @@ class TokenExceptionHandler {
                 .findFirst()
                 .map(error -> error.getField() + " " + error.getDefaultMessage())
                 .orElse("invalid request body");
-        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, detail);
+        return ProblemSupport.of(HttpStatus.BAD_REQUEST, ProblemSupport.VALIDATION_FAILED, detail);
     }
 
     @ExceptionHandler(TokenNotFound.class)
     ProblemDetail handleNotFound(TokenNotFound ex) {
-        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+        return ProblemSupport.of(HttpStatus.NOT_FOUND, ProblemSupport.TOKEN_NOT_FOUND, ex.getMessage());
     }
 
     @ExceptionHandler(IdempotencyConflict.class)
     ProblemDetail handleConflict(IdempotencyConflict ex) {
-        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        return ProblemSupport.of(HttpStatus.CONFLICT, ProblemSupport.IDEMPOTENCY_CONFLICT, ex.getMessage());
     }
 
     @ExceptionHandler(IllegalTokenTransition.class)
     ProblemDetail handleIllegalTransition(IllegalTokenTransition ex) {
-        return ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+        return ProblemSupport.of(
+                HttpStatus.UNPROCESSABLE_ENTITY, ProblemSupport.ILLEGAL_TOKEN_TRANSITION, ex.getMessage());
     }
 }

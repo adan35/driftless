@@ -87,6 +87,18 @@ class DriftlessApplicationTests {
     void contextLoads() {}
 
     @Test
+    void browsableOpenApiContractIsServedFromTheClasspath() {
+        // The committed deploy/openapi/openapi.yaml is copied onto the classpath at build time and
+        // served statically at /openapi.yaml; Swagger UI renders it at /swagger-ui/index.html.
+        assertThat(new org.springframework.core.io.ClassPathResource("static/openapi.yaml").exists())
+                .as("OpenAPI contract is on the classpath (served at /openapi.yaml)")
+                .isTrue();
+        assertThat(new org.springframework.core.io.ClassPathResource("static/swagger-ui/index.html").exists())
+                .as("Swagger UI page is present (served at /swagger-ui/index.html)")
+                .isTrue();
+    }
+
+    @Test
     void everyModuleBeanAndARealDatasourceAreWired() {
         assertThat(context.getBean(Ledger.class)).isInstanceOf(MeteredLedger.class);
         assertThat(context.getBean(RuleEngine.class)).isInstanceOf(TimedRuleEngine.class);

@@ -54,6 +54,20 @@
 			<artifactId>spring-boot-starter-webmvc</artifactId>
 		</dependency>
 
+		<!--
+		    Browsable API contract. springdoc-openapi 2.x targets Spring 6 / Spring Boot 3 and is not
+		    yet compatible with this project's Spring Boot 4 runtime (it would break the build), so the
+		    contract is the hand-authored, committed deploy/openapi/openapi.yaml served statically at
+		    /openapi.yaml (copied below) and rendered by Swagger UI at /swagger-ui/index.html. The
+		    swagger-ui webjar provides the UI assets under /webjars/** — static files only, no runtime
+		    framework coupling.
+		-->
+		<dependency>
+			<groupId>org.webjars</groupId>
+			<artifactId>swagger-ui</artifactId>
+			<version>5.17.14</version>
+		</dependency>
+
 		<!-- Spec 08: actuator + Prometheus registry expose /actuator/prometheus and /actuator/health,
 		     and auto-provide JVM / HTTP / Hikari metrics alongside the custom driftless_* meters. -->
 		<dependency>
@@ -100,6 +114,36 @@
 
 	<build>
 		<plugins>
+			<!--
+			    Single-source the API contract: copy the committed deploy/openapi/openapi.yaml onto the
+			    classpath as a static resource so the booted app serves it at GET /openapi.yaml (and
+			    Swagger UI at /swagger-ui/index.html renders it) without duplicating the file in-repo.
+			-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-resources-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>copy-openapi-contract</id>
+						<phase>process-resources</phase>
+						<goals>
+							<goal>copy-resources</goal>
+						</goals>
+						<configuration>
+							<outputDirectory>${project.build.outputDirectory}/static</outputDirectory>
+							<resources>
+								<resource>
+									<directory>${project.basedir}/../deploy/openapi</directory>
+									<includes>
+										<include>openapi.yaml</include>
+									</includes>
+								</resource>
+							</resources>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+
 			<!-- Only app and partner-simulator repackage into runnable boot jars. -->
 			<plugin>
 				<groupId>org.springframework.boot</groupId>

@@ -7,6 +7,8 @@ import io.driftless.ledger.api.Account;
 import io.driftless.ledger.api.Balance;
 import io.driftless.ledger.api.BalanceInvariantViolation;
 import io.driftless.ledger.api.Direction;
+import io.driftless.ledger.api.EntryCursor;
+import io.driftless.ledger.api.EntryPage;
 import io.driftless.ledger.api.JournalEntry;
 import io.driftless.ledger.api.Ledger;
 import io.driftless.ledger.api.Page;
@@ -62,6 +64,9 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class LedgerService implements Ledger {
 
+    /** Server-side cap on a single keyset page, mirrored by the statement REST endpoint. */
+    static final int MAX_ENTRIES_PER_PAGE = 200;
+
     private final AccountRepository accounts;
     private final TransactionRepository transactions;
     private final JournalEntryRepository entries;
@@ -82,6 +87,12 @@ public class LedgerService implements Ledger {
                 id, account.type(), account.currency().getCurrencyCode(), account.name(), clock.instant()));
         log.info("opened account {} type={} currency={}", account.id(), account.type(), account.currency());
         return LedgerMapper.toApi(saved);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<Account> findAccount(AccountId account) {
+        return accounts.findById(account.value()).map(LedgerMapper::toApi);
     }
 
     @Override
@@ -167,6 +178,28 @@ public class LedgerService implements Ledger {
         List<JournalEntryEntity> rows =
                 entries.findPageForAccount(account.value(), PageRequest.of(page.number(), page.size()));
         return LedgerMapper.toApiEntries(rows);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public EntryPage entriesAfter(AccountId account, EntryCursor cursor, int limit) {
+        requireAccount(account);
+        int capped = Math.max(1, Math.min(limit, MAX_ENTRIES_PER_PAGE));
+        EntryCursor from = cursor == null ? EntryCursor.START : cursor;
+        List<JournalEntryEntity> rows =
+                entries.findEntriesAfter(account.value(), from.afterSequence(), PageRequest.of(0, capped));
+        List<JournalEntry> mapped = LedgerMapper.toApiEntries(rows);
+        // A full page implies there may be more; expose the last row's stable global sequence as the
+        // next cursor. A short page is the end of the currently visible stream, so no cursor. Paging
+        // is gap-free and duplicate-free for entries committed in entry_seq order; because Postgres
+        // sequences are non-transactional, a lower-seq row that commits after a higher-seq row already
+        // paged past can be transiently omitted — never lost or duplicated. A fresh read from START
+        // returns the complete set once writers commit.
+        Optional<EntryCursor> next = rows.size() == capped
+                ? Optional.of(EntryCursor.after(rows.get(rows.size() - 1).getEntrySeq()))
+                : Optional.empty();
+        log.debug("entriesAfter {} from={} limit={} returned={}", account, from.afterSequence(), capped, rows.size());
+        return new EntryPage(mapped, next);
     }
 
     /**

@@ -1,0 +1,592 @@
+openapi: 3.1.0
+info:
+  title: Driftless — Issuer-Processor Core API
+  description: >
+    Public REST surface of Driftless: an immutable double-entry ledger plus a card-authorization
+    saga that keeps money correct under failure. Every mutating endpoint is idempotent on the
+    `Idempotency-Key` header (missing ⇒ 400, same key + different body ⇒ 409, replay ⇒ original 2xx).
+    Money is integer **minor units** with an explicit ISO-4217 currency — no floating point ever
+    crosses the boundary. Errors are RFC-7807 `application/problem+json` bodies carrying a stable,
+    machine-readable `code`.
+
+
+    This document is hand-authored and committed in-repo (`deploy/openapi/openapi.yaml`). springdoc
+    `2.x` targets Spring 6 / Spring Boot 3 and is not yet compatible with the project's Spring Boot 4
+    runtime, so it would break the build; the committed contract is served statically by the app at
+    `/openapi.yaml` and rendered by Swagger UI at `/swagger-ui/index.html`.
+  version: 0.0.1
+servers:
+  - url: http://localhost:8080
+    description: Local modular monolith (docker-compose / `app`)
+tags:
+  - name: Accounts
+    description: Account lifecycle, funding and statements
+  - name: Authorizations
+    description: Card-authorization saga (authorize → capture → reversal)
+  - name: Tokens
+    description: Tokenization lifecycle gating authorizations
+  - name: Reconciliation
+    description: Continuous zero-drift balance proof and RCA
+components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Opaque, non-blank key making the mutating request safe to retry.
+      schema:
+        type: string
+    PathId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    ProblemDetail:
+      description: RFC-7807 problem with a stable machine-readable `code`.
+      type: object
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
+          description: >
+            Stable error code clients branch on, e.g. VALIDATION_FAILED, MISSING_IDEMPOTENCY_KEY,
+            IDEMPOTENCY_CONFLICT, ACCOUNT_NOT_FOUND, AUTHORIZATION_NOT_FOUND, TOKEN_NOT_FOUND,
+            ILLEGAL_AUTHORIZATION_STATE, ILLEGAL_TOKEN_TRANSITION, BALANCE_INVARIANT_VIOLATION,
+            CURRENCY_MISMATCH, DOMAIN_ERROR.
+    OpenAccountRequest:
+      type: object
+      required: [currency, name]
+      properties:
+        type:
+          type: string
+          description: Double-entry account category; defaults to LIABILITY when omitted.
+          enum: [ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE]
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          example: USD
+        name:
+          type: string
+          example: cardholder-alice
+    AccountResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        currency:
+          type: string
+        name:
+          type: string
+    FundAccountRequest:
+      type: object
+      required: [amountMinor, currency]
+      properties:
+        amountMinor:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Amount to load, in minor units (strictly positive).
+          example: 100000
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          example: USD
+    FundingResponse:
+      type: object
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+        postedAt:
+          type: string
+          format: date-time
+    BalanceResponse:
+      type: object
+      properties:
+        account:
+          type: string
+          format: uuid
+        currency:
+          type: string
+        posted:
+          type: integer
+          format: int64
+          description: Settled balance in minor units (debit-positive).
+        available:
+          type: integer
+          format: int64
+          description: posted − activeHoldTotal, in minor units.
+    StatementEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        transactionId:
+          type: string
+          format: uuid
+        direction:
+          type: string
+          enum: [DEBIT, CREDIT]
+        amountMinor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        sequenceNo:
+          type: integer
+    StatementResponse:
+      type: object
+      properties:
+        account:
+          type: string
+          format: uuid
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatementEntry'
+        nextCursor:
+          type: [string, "null"]
+          description: Opaque keyset cursor for the next page; null at the end of the stream.
+    AuthorizeRequest:
+      type: object
+      required: [account, amountMinor, currency, mcc, merchantId]
+      properties:
+        account:
+          type: string
+          format: uuid
+        amountMinor:
+          type: integer
+          format: int64
+          minimum: 1
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        mcc:
+          type: string
+        merchantId:
+          type: string
+        tokenId:
+          type: [string, "null"]
+          format: uuid
+    AuthorizeResponse:
+      type: object
+      properties:
+        authId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [AUTHORIZING, AUTHORIZED, DECLINED, CAPTURED, REVERSED]
+    CaptureRequest:
+      type: object
+      properties:
+        amountMinor:
+          type: integer
+          format: int64
+          description: Optional partial-capture amount in (0, authorized]; full capture when omitted.
+    AuthorizationResponse:
+      type: object
+      properties:
+        authId:
+          type: string
+          format: uuid
+        account:
+          type: string
+          format: uuid
+        amountMinor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        status:
+          type: string
+        partnerRef:
+          type: [string, "null"]
+        declineReason:
+          type: [string, "null"]
+    CreateTokenRequest:
+      type: object
+      required: [cardRef]
+      properties:
+        cardRef:
+          type: string
+          description: Opaque, log-safe reference to the card (never the raw PAN).
+        tokenId:
+          type: [string, "null"]
+          format: uuid
+    TokenResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        cardRef:
+          type: string
+        status:
+          type: string
+          enum: [CREATED, ACTIVE, SUSPENDED, DEACTIVATED]
+        updatedAt:
+          type: string
+          format: date-time
+    ReconciliationResult:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        runAt:
+          type: string
+          format: date-time
+        passed:
+          type: boolean
+        driftMinor:
+          type: integer
+          format: int64
+  responses:
+    Problem:
+      description: RFC-7807 problem response.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+paths:
+  /accounts:
+    post:
+      tags: [Accounts]
+      summary: Open a ledger account
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAccountRequest'
+      responses:
+        '201':
+          description: Account opened (replay returns the original).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /accounts/{id}:
+    get:
+      tags: [Accounts]
+      summary: Get account details
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Account details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '404': { $ref: '#/components/responses/Problem' }
+  /accounts/{id}/funding:
+    post:
+      tags: [Accounts]
+      summary: Fund (load) an account with a balanced ledger post
+      description: >
+        Loads funds onto the account with a balanced double-entry post — a DEBIT to the target and a
+        CREDIT to a per-currency system funding source — keeping the global Σ(journal entries) == 0.
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FundAccountRequest'
+      responses:
+        '200':
+          description: Funding transaction posted (replay returns the original).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FundingResponse'
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /accounts/{id}/balance:
+    get:
+      tags: [Accounts]
+      summary: Posted + available balance
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Balance in minor units.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BalanceResponse'
+        '404': { $ref: '#/components/responses/Problem' }
+  /accounts/{id}/statement:
+    get:
+      tags: [Accounts]
+      summary: Keyset (seek) statement page
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+        - name: after
+          in: query
+          required: false
+          description: Opaque cursor from a previous page's nextCursor; omit for the first page.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: Page size, capped at 200 (default 50).
+          schema:
+            type: integer
+            maximum: 200
+      responses:
+        '200':
+          description: A page of entries plus the next cursor.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatementResponse'
+        '404': { $ref: '#/components/responses/Problem' }
+  /authorizations:
+    post:
+      tags: [Authorizations]
+      summary: Authorize (place a hold)
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthorizeRequest'
+      responses:
+        '201':
+          description: Authorization created (AUTHORIZED / DECLINED / REVERSED).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthorizeResponse'
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /authorizations/{id}:
+    get:
+      tags: [Authorizations]
+      summary: Get authorization state
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Authorization state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthorizationResponse'
+        '404': { $ref: '#/components/responses/Problem' }
+  /authorizations/{id}/capture:
+    post:
+      tags: [Authorizations]
+      summary: Capture (settle) an authorization
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptureRequest'
+      responses:
+        '200':
+          description: Capture applied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthorizationResponse'
+        '400': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /authorizations/{id}/reverse:
+    post:
+      tags: [Authorizations]
+      summary: Reverse an authorization
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Reversal applied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthorizationResponse'
+        '409': { $ref: '#/components/responses/Problem' }
+  /tokens:
+    post:
+      tags: [Tokens]
+      summary: Create a token
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTokenRequest'
+      responses:
+        '201':
+          description: Token created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /tokens/{id}:
+    get:
+      tags: [Tokens]
+      summary: Get token state
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Token state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '404': { $ref: '#/components/responses/Problem' }
+  /tokens/{id}/activate:
+    post:
+      tags: [Tokens]
+      summary: Activate a token
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Token activated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '422': { $ref: '#/components/responses/Problem' }
+  /tokens/{id}/suspend:
+    post:
+      tags: [Tokens]
+      summary: Suspend a token
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Token suspended.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '422': { $ref: '#/components/responses/Problem' }
+  /tokens/{id}/resume:
+    post:
+      tags: [Tokens]
+      summary: Resume a suspended token
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Token resumed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '422': { $ref: '#/components/responses/Problem' }
+  /tokens/{id}/deactivate:
+    post:
+      tags: [Tokens]
+      summary: Deactivate a token (terminal)
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Token deactivated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '422': { $ref: '#/components/responses/Problem' }
+  /reconciliation/run:
+    post:
+      tags: [Reconciliation]
+      summary: Run the zero-drift balance proof now
+      responses:
+        '200':
+          description: The persisted reconciliation result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationResult'
+  /reconciliation/latest:
+    get:
+      tags: [Reconciliation]
+      summary: Most recent reconciliation result
+      responses:
+        '200':
+          description: The latest result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationResult'
+        '404':
+          description: No reconciliation has run yet.
+  /reconciliation/{id}:
+    get:
+      tags: [Reconciliation]
+      summary: Reconciliation result by id
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: The result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationResult'
+        '404':
+          description: Not found.
+  /reconciliation/{id}/rca:
+    get:
+      tags: [Reconciliation]
+      summary: Root-cause report for a reconciliation result
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: The RCA report.
+        '404':
+          description: Not found.

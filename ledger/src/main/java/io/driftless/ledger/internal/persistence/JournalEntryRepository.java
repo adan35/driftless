@@ -44,6 +44,25 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntryEntity
     List<JournalEntryEntity> findPageForAccount(@Param("accountId") UUID accountId, Pageable pageable);
 
     /**
+     * Keyset (seek) page of an account's entries: every entry whose global {@code entry_seq} is
+     * strictly greater than {@code afterSeq}, oldest first, limited by {@code pageable}. This is the
+     * seek predicate {@code entry_seq > ? ORDER BY entry_seq ASC LIMIT ?} — no {@code OFFSET}, so it
+     * never scans skipped rows. Paging is gap-free and duplicate-free for entries committed in {@code
+     * entry_seq} order; since Postgres sequences are non-transactional, a lower-seq row committing
+     * after a higher-seq row already paged past can be transiently omitted until a fresh read (never
+     * lost or duplicated). {@code afterSeq = 0} starts from the beginning (entry sequences are {@code
+     * >= 1}).
+     */
+    @Query(
+            """
+            SELECT e FROM JournalEntryEntity e
+            WHERE e.accountId = :accountId AND e.entrySeq > :afterSeq
+            ORDER BY e.entrySeq ASC
+            """)
+    List<JournalEntryEntity> findEntriesAfter(
+            @Param("accountId") UUID accountId, @Param("afterSeq") long afterSeq, Pageable pageable);
+
+    /**
      * Signed global sum of every journal entry in a currency, in minor units (debits positive,
      * credits negative). For a correct ledger this is always {@code 0}. Seed of the Spec 07
      * zero-drift property; {@link Optional#empty()} when no entries exist for the currency.
