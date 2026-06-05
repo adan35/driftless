@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.driftless.auth.api.AuthorizationStatus;
 import io.driftless.auth.api.AuthorizationView;
 import io.driftless.auth.api.HoldStatus;
+import io.driftless.auth.api.IllegalAuthorizationState;
 import io.driftless.auth.internal.AuthorizationSaga;
 import io.driftless.auth.internal.AuthorizeCommand;
 import io.driftless.auth.internal.RecoverySweep;
@@ -26,10 +27,21 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Currency;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.Random;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import net.jqwik.api.ForAll;
 import net.jqwik.api.Property;
 import net.jqwik.api.constraints.IntRange;
@@ -70,6 +82,12 @@ class LedgerInvariantPropertyTest {
     private static final String BLOCKED_MCC = "7995";
     private static final String MERCHANT = "prop-merchant";
 
+    // Concurrency knobs: a SMALL set of shared accounts across TWO currencies so operations genuinely
+    // race on the same account/holds, driven by a bounded pool. Kept small + bounded for non-flakiness.
+    private static final String[] CONCURRENT_CURRENCIES = {"USD", "EUR"};
+    private static final int ACCOUNTS_PER_CURRENCY = 2;
+    private static final int CONCURRENT_THREADS = 6;
+
     // APPROVE is weighted so enough authorizations reach AUTHORIZED to be captured/reversed.
     private static final ControllablePartner.AuthorizeMode[] AUTH_MODES = {
         ControllablePartner.AuthorizeMode.APPROVE,
@@ -86,6 +104,18 @@ class LedgerInvariantPropertyTest {
     }
 
     private record ExecutedOp(OpType type, UUID authId, String key, AuthorizeCommand command) {}
+
+    /** A shared account in a specific currency that concurrent ops contend over. */
+    private record AccountInfo(AccountId id, String currencyCode) {}
+
+    /** A seed-deterministic op the concurrent burst submits; the INTERLEAVING is what races. */
+    private record OpPlan(
+            int kind,
+            AccountInfo account,
+            ControllablePartner.AuthorizeMode mode,
+            boolean steerDecline,
+            long amount,
+            double target) {}
 
     private static ConfigurableApplicationContext context;
     private static PostgreSQLContainer<?> postgres;
@@ -186,11 +216,181 @@ class LedgerInvariantPropertyTest {
                 .isTrue();
     }
 
+    /**
+     * THE GATE, hardened for CONCURRENCY + MULTI-CURRENCY — the system's hardest claims, now property-tested.
+     *
+     * <p>Multiple threads issue {@code authorize / capture / reverse} <strong>concurrently</strong> against
+     * a <em>small set of shared accounts spanning two currencies (USD + EUR)</em>, so operations genuinely
+     * RACE on the same account and the same holds while the {@link ControllablePartner} injects faults. The
+     * workload is seed-deterministic (generated single-threaded); only the interleaving races. After the
+     * burst joins and the recovery sweep settles to quiescence, it asserts ALL THREE invariants survived the
+     * races:
+     *
+     * <ol>
+     *   <li><b>No drift:</b> the global signed sum of journal entries is exactly {@code 0} <em>per currency,
+     *       independently</em> — no cross-currency contamination.
+     *   <li><b>No double-effect:</b> replaying every successfully issued op with its original idempotency key
+     *       adds no journal rows and no authorizations — idempotency held under races.
+     *   <li><b>Clean holds:</b> every AUTHORIZED authorization keeps exactly one ACTIVE hold; every terminal
+     *       one has none; and per account {@code available == posted - activeHoldTotal}.
+     * </ol>
+     *
+     * <p>The saga's {@code SELECT ... FOR UPDATE} + {@code @Version} on authorizations plus the idempotency
+     * guard are what make this hold; legal races (a capture losing to a concurrent reverse, two captures on
+     * the same auth) surface as {@link IllegalAuthorizationState} and are tolerated. Any OTHER exception, or
+     * any invariant violation, fails the gate.
+     */
+    @Property(tries = 6)
+    void concurrentMultiCurrencySagaNeverDriftsAndHoldsNoDoubleEffect(
+            @ForAll @LongRange(min = 1L, max = 1_000_000L) long seed,
+            @ForAll @IntRange(min = 12, max = 28) int operations) {
+        partner.reset();
+        Random random = new Random(seed);
+
+        List<AccountInfo> accounts = new ArrayList<>();
+        for (String currencyCode : CONCURRENT_CURRENCIES) {
+            for (int i = 0; i < ACCOUNTS_PER_CURRENCY; i++) {
+                accounts.add(new AccountInfo(openFundedAccount(currencyCode, 1_000_000_000L), currencyCode));
+            }
+        }
+
+        // Pre-generate the plan so the WORKLOAD is reproducible from the seed; the concurrent interleaving is
+        // what we are stress-testing for races.
+        List<OpPlan> plan = new ArrayList<>();
+        for (int i = 0; i < operations; i++) {
+            AccountInfo account = accounts.get(random.nextInt(accounts.size()));
+            int kind = random.nextInt(3); // 0 authorize, 1 capture, 2 reverse
+            ControllablePartner.AuthorizeMode mode = AUTH_MODES[random.nextInt(AUTH_MODES.length)];
+            boolean steerDecline = random.nextInt(6) == 0;
+            long amount = 1_000L + random.nextInt(20_000);
+            plan.add(new OpPlan(kind, account, mode, steerDecline, amount, random.nextDouble()));
+        }
+
+        List<ExecutedOp> executed = new CopyOnWriteArrayList<>();
+        List<UUID> authorizedIds = new CopyOnWriteArrayList<>();
+        Queue<Throwable> unexpected = new ConcurrentLinkedQueue<>();
+
+        ExecutorService pool = Executors.newFixedThreadPool(CONCURRENT_THREADS);
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            for (OpPlan op : plan) {
+                futures.add(pool.submit(() -> runConcurrentOp(op, executed, authorizedIds, unexpected)));
+            }
+            for (Future<?> future : futures) {
+                future.get(30L, TimeUnit.SECONDS);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("concurrent burst interrupted (seed=" + seed + ")", e);
+        } catch (ExecutionException | TimeoutException e) {
+            throw new IllegalStateException("concurrent burst did not complete (seed=" + seed + ")", e);
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertThat(unexpected)
+                .as(
+                        "only legal races (IllegalAuthorizationState) tolerated; no UNEXPECTED exception escaped a concurrent op (seed=%d)",
+                        seed)
+                .isEmpty();
+
+        settleSweepConcurrent();
+
+        assertNoDrift();
+        assertNoInFlight();
+        assertNoDoubleEffect(executed);
+        assertCleanHoldsConcurrent(accounts, executed);
+
+        // The reconciliation job agrees independently: per-currency global zero + hold consistency hold after
+        // a settled concurrent multi-currency burst.
+        assertThat(reconciliationService.run().passed())
+                .as(
+                        "reconciliation reports zero drift PER CURRENCY after a settled concurrent burst (seed=%d, ops=%d)",
+                        seed, operations)
+                .isTrue();
+    }
+
     @Property(tries = 5)
-    void engineSanityCheck(@ForAll @IntRange(min = 0, max = 10) int n) {
-        // Always-on guard that the jqwik engine is actually executing this gate (review finding W2):
+    void engineSanityCheck(
+            @ForAll @IntRange(min = 0, max = 10)
+                    int n) { // Always-on guard that the jqwik engine is actually executing this gate (review
+        // finding W2):
         // fails loudly if the engine ever drops off the classpath or the property is skipped.
         assertThat(n).isBetween(0, 10);
+    }
+
+    // --- concurrent steps ------------------------------------------------------------------------
+
+    private void runConcurrentOp(
+            OpPlan op, List<ExecutedOp> executed, List<UUID> authorizedIds, Queue<Throwable> unexpected) {
+        try {
+            if (op.kind() == 0 || authorizedIds.isEmpty()) {
+                authorizeConcurrent(op, executed, authorizedIds);
+            } else if (op.kind() == 1) {
+                captureConcurrent(op, executed, authorizedIds);
+            } else {
+                reverseConcurrent(op, executed, authorizedIds);
+            }
+        } catch (IllegalAuthorizationState legalRace) {
+            // Expected: a capture/reverse lost a race to a concurrent reverse/capture on the same
+            // authorization (or two ops targeted the same id). The loser must roll back cleanly — which is
+            // exactly what FOR UPDATE + @Version + the idempotency guard guarantee. Account it and move on.
+        } catch (Throwable t) {
+            unexpected.add(t);
+        }
+    }
+
+    private void authorizeConcurrent(OpPlan op, List<ExecutedOp> executed, List<UUID> authorizedIds) {
+        String mcc = op.steerDecline() ? BLOCKED_MCC : APPROVE_MCC;
+        String merchant = ControllablePartner.merchantWithMode(MERCHANT, op.mode());
+        Money amount = money(op.account().currencyCode(), op.amount());
+        AuthorizeCommand command = new AuthorizeCommand(op.account().id(), amount, mcc, merchant, Optional.empty());
+        String key = UUID.randomUUID().toString();
+
+        AuthorizationView view = saga.authorize(command, key);
+        executed.add(new ExecutedOp(OpType.AUTHORIZE, view.id(), key, command));
+        if (view.status() == AuthorizationStatus.AUTHORIZED) {
+            authorizedIds.add(view.id());
+        }
+    }
+
+    private void captureConcurrent(OpPlan op, List<ExecutedOp> executed, List<UUID> authorizedIds) {
+        UUID authId = pickTarget(authorizedIds, op.target());
+        if (authId == null) {
+            authorizeConcurrent(op, executed, authorizedIds);
+            return;
+        }
+        String key = UUID.randomUUID().toString();
+        saga.capture(authId, Optional.empty(), key);
+        executed.add(new ExecutedOp(OpType.CAPTURE, authId, key, null));
+    }
+
+    private void reverseConcurrent(OpPlan op, List<ExecutedOp> executed, List<UUID> authorizedIds) {
+        UUID authId = pickTarget(authorizedIds, op.target());
+        if (authId == null) {
+            authorizeConcurrent(op, executed, authorizedIds);
+            return;
+        }
+        String key = UUID.randomUUID().toString();
+        saga.reverse(authId, key);
+        executed.add(new ExecutedOp(OpType.REVERSE, authId, key, null));
+    }
+
+    /**
+     * Peek (never remove) a target from the shared authorized ids so MULTIPLE threads can target the SAME
+     * authorization concurrently — that is what makes capture/reverse genuinely race on the same holds.
+     */
+    private static UUID pickTarget(List<UUID> authorizedIds, double selector) {
+        int size = authorizedIds.size();
+        if (size == 0) {
+            return null;
+        }
+        int index = Math.min(size - 1, (int) (selector * size));
+        try {
+            return authorizedIds.get(index);
+        } catch (IndexOutOfBoundsException shrankUnderRace) {
+            return null;
+        }
     }
 
     // --- steps -----------------------------------------------------------------------------------
@@ -289,6 +489,39 @@ class LedgerInvariantPropertyTest {
         assertThat(available).as("available == posted - activeHoldTotal").isEqualTo(posted - activeHoldTotal);
     }
 
+    private void assertCleanHoldsConcurrent(List<AccountInfo> accounts, List<ExecutedOp> executed) {
+        Map<UUID, Long> expectedHoldByAccount = new HashMap<>();
+        for (ExecutedOp op : executed) {
+            if (op.type() != OpType.AUTHORIZE) {
+                continue;
+            }
+            AuthorizationEntity auth = authorizations.findById(op.authId()).orElseThrow();
+            List<HoldEntity> activeHolds = holds.findByAuthorizationIdAndStatus(op.authId(), HoldStatus.ACTIVE);
+            if (auth.getStatus() == AuthorizationStatus.AUTHORIZED) {
+                assertThat(activeHolds)
+                        .as("an AUTHORIZED authorization keeps exactly one ACTIVE hold under races")
+                        .hasSize(1);
+                expectedHoldByAccount.merge(auth.getAccountId(), auth.getAmountMinor(), Long::sum);
+            } else {
+                assertThat(activeHolds)
+                        .as("a %s authorization has no dangling ACTIVE hold under races", auth.getStatus())
+                        .isEmpty();
+            }
+        }
+        for (AccountInfo account : accounts) {
+            long expected = expectedHoldByAccount.getOrDefault(account.id().value(), 0L);
+            long activeHoldTotal = holds.activeHoldTotalMinor(account.id().value(), account.currencyCode());
+            assertThat(activeHoldTotal)
+                    .as("active hold total on %s equals the sum of its AUTHORIZED amounts", account.id())
+                    .isEqualTo(expected);
+            long posted = ledger.balanceOf(account.id()).posted().amountMinor();
+            long available = ledger.balanceOf(account.id()).available().amountMinor();
+            assertThat(available)
+                    .as("available == posted - activeHoldTotal on %s", account.id())
+                    .isEqualTo(posted - activeHoldTotal);
+        }
+    }
+
     // --- helpers ---------------------------------------------------------------------------------
 
     private void settleSweep() {
@@ -305,12 +538,31 @@ class LedgerInvariantPropertyTest {
         recoverySweep.sweep();
     }
 
+    /** Drive the sweep to quiescence with a comfortable budget vs the 2s partner timeout + 3s grace. */
+    private void settleSweepConcurrent() {
+        long deadline = System.nanoTime() + 25_000_000_000L;
+        while (System.nanoTime() < deadline) {
+            recoverySweep.sweep();
+            long inFlight = authorizations.countByStatus(AuthorizationStatus.AUTHORIZING)
+                    + authorizations.countByStatus(AuthorizationStatus.COMPENSATING);
+            if (inFlight == 0L) {
+                return;
+            }
+            sleep(200L);
+        }
+        recoverySweep.sweep();
+    }
+
     private AccountId openFundedAccount(long fundingMinor) {
-        Currency currency = Currency.getInstance(CURRENCY);
+        return openFundedAccount(CURRENCY, fundingMinor);
+    }
+
+    private AccountId openFundedAccount(String currencyCode, long fundingMinor) {
+        Currency currency = Currency.getInstance(currencyCode);
         AccountId cardholder = AccountId.newId();
         AccountId settlement = settlementAccountId(currency);
         ledger.openAccount(new Account(cardholder, AccountType.LIABILITY, currency, "cardholder"));
-        ledger.openAccount(new Account(settlement, AccountType.ASSET, currency, "settlement-" + CURRENCY));
+        ledger.openAccount(new Account(settlement, AccountType.ASSET, currency, "settlement-" + currencyCode));
         Money amount = Money.of(fundingMinor, currency);
         ledger.post(new PostingRequest(
                 "prop-fund:" + cardholder,
@@ -329,6 +581,10 @@ class LedgerInvariantPropertyTest {
 
     private static Money usd(long minor) {
         return Money.of(minor, Currency.getInstance(CURRENCY));
+    }
+
+    private static Money money(String currencyCode, long minor) {
+        return Money.of(minor, Currency.getInstance(currencyCode));
     }
 
     private static void sleep(long millis) {

@@ -7,11 +7,11 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 
 /**
@@ -35,6 +35,20 @@ final class ControllablePartner {
         FAIL_BEFORE_RESPONSE
     }
 
+    /**
+     * Marker the property gate can append to a {@code merchantId} so the partner picks its authorize
+     * mode <strong>per request</strong> instead of from a shared mutable field. This is what makes the
+     * stub safe under CONCURRENCY: each in-flight authorize carries its own intended fault mode, so
+     * racing threads never clobber one another's mode. Sequential callers that don't append the marker
+     * fall back to {@link #setAuthorizeMode(AuthorizeMode)}.
+     */
+    private static final String MODE_MARKER = "#mode=";
+
+    /** Encode {@code mode} into a merchantId the partner resolves per-request (thread-safe). */
+    static String merchantWithMode(String merchant, AuthorizeMode mode) {
+        return merchant + MODE_MARKER + mode.name();
+    }
+
     private final ObjectMapper mapper = new ObjectMapper();
     private final HttpServer server;
     private final Map<String, Record> records = new ConcurrentHashMap<>();
@@ -46,8 +60,10 @@ final class ControllablePartner {
     private record SideEffect(String partnerRef, boolean delivered) {}
 
     private static final class Record {
-        private final List<SideEffect> sideEffects = new ArrayList<>();
-        private ObjectNode response;
+        // Concurrent-safe: handleAuthorize may append a side effect while a recovery sweep's state
+        // probe (handleState) iterates the list, and the response is published across threads.
+        private final List<SideEffect> sideEffects = new CopyOnWriteArrayList<>();
+        private volatile ObjectNode response;
     }
 
     ControllablePartner() {
@@ -102,7 +118,7 @@ final class ControllablePartner {
             return;
         }
         String partnerRef = "AUTH-" + UUID.randomUUID();
-        switch (authorizeMode) {
+        switch (resolveAuthorizeMode(body)) {
             case APPROVE -> {
                 ObjectNode response = approveNode(requestId, partnerRef);
                 store(requestId, partnerRef, response, true);
@@ -187,6 +203,26 @@ final class ControllablePartner {
             view.set("response", record.response);
         }
         send(exchange, 200, view);
+    }
+
+    /**
+     * Resolve the authorize mode for this request: a {@code merchantId} carrying the {@link
+     * #MODE_MARKER} wins (per-request, concurrency-safe), otherwise the shared {@link #authorizeMode}
+     * applies (used by the sequential callers).
+     */
+    private AuthorizeMode resolveAuthorizeMode(Map<String, Object> body) {
+        Object merchant = body.get("merchantId");
+        if (merchant instanceof String s) {
+            int idx = s.indexOf(MODE_MARKER);
+            if (idx >= 0) {
+                try {
+                    return AuthorizeMode.valueOf(s.substring(idx + MODE_MARKER.length()));
+                } catch (IllegalArgumentException ignored) {
+                    // Unknown marker payload: fall through to the shared mode.
+                }
+            }
+        }
+        return authorizeMode;
     }
 
     private ObjectNode approveNode(String requestId, String partnerRef) {
