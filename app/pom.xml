@@ -91,6 +91,18 @@
 			<scope>test</scope>
 		</dependency>
 		<!--
+		    ArchUnit imports every io.driftless main class on app's classpath (app depends on all
+		    feature modules) and proves the module-boundary contract in CI: no module reaches into
+		    another's internal/web packages, the dependency direction points inward, and there are no
+		    package cycles. Test scope only; tests are excluded from the import, so recon/observability
+		    test fixtures that legitimately touch internals do not register as violations.
+		-->
+		<dependency>
+			<groupId>com.tngtech.archunit</groupId>
+			<artifactId>archunit-junit5</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!--
 		    Since Spec 01 the ledger module brings JPA + Flyway, so the monolith context requires a
 		    real datasource to boot. The smoke test stands one up via Testcontainers Postgres, which
 		    is how the modular monolith is actually run. Test-scope only; no production change.

@@ -1,0 +1,41 @@
+version: 2
+updates:
+  # Maven reactor: keep the dependency graph and plugin versions fresh and patched.
+  - package-ecosystem: maven
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - maven
+    commit-message:
+      prefix: "build(deps)"
+      include: scope
+    groups:
+      # One PR for the Spring Boot platform so the BOM moves coherently.
+      spring-boot:
+        patterns:
+          - "org.springframework.boot:*"
+          - "org.springframework:*"
+      test-tooling:
+        patterns:
+          - "net.jqwik:*"
+          - "com.tngtech.archunit:*"
+          - "org.testcontainers:*"
+
+  # GitHub Actions used by the CI workflow above.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "ci(deps)"

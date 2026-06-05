@@ -40,9 +40,16 @@
 		<spotless.version>2.43.0</spotless.version>
 		<jacoco.version>0.8.12</jacoco.version>
 		<palantir-java-format.version>2.50.0</palantir-java-format.version>
+		<maven-enforcer-plugin.version>3.5.0</maven-enforcer-plugin.version>
+		<cyclonedx-maven-plugin.version>2.9.1</cyclonedx-maven-plugin.version>
+
+		<!-- Build-contract floors enforced by maven-enforcer at the validate phase -->
+		<enforcer.java.version>[21,)</enforcer.java.version>
+		<enforcer.maven.version>[3.9.0,)</enforcer.maven.version>
 
 		<!-- Dependency versions not managed by the Spring Boot BOM -->
 		<jqwik.version>1.9.1</jqwik.version>
+		<archunit.version>1.3.0</archunit.version>
 
 		<!-- common minimum line coverage; raised per-module where logic exists -->
 		<coverage.line.min>0.00</coverage.line.min>
@@ -99,12 +106,32 @@
 				<version>${jqwik.version}</version>
 				<scope>test</scope>
 			</dependency>
+
+			<!-- ArchUnit: proves module boundaries in CI (not in the Spring Boot BOM) -->
+			<dependency>
+				<groupId>com.tngtech.archunit</groupId>
+				<artifactId>archunit-junit5</artifactId>
+				<version>${archunit.version}</version>
+				<scope>test</scope>
+			</dependency>
 		</dependencies>
 	</dependencyManagement>
 
 	<build>
 		<pluginManagement>
 			<plugins>
+				<!--
+				    The site lifecycle is never run, but its default binding (maven-site-plugin) arrives
+				    unversioned via Maven core defaults, which trips enforcer's requirePluginVersions.
+				    Pinning the version here makes every plugin in the build explicitly versioned with no
+				    floating defaults; it adds no behaviour since `site` is not part of verify.
+				-->
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-site-plugin</artifactId>
+					<version>3.21.0</version>
+				</plugin>
+
 				<!-- Lombok annotation processing inherited by every module -->
 				<plugin>
 					<groupId>org.apache.maven.plugins</groupId>
@@ -180,6 +207,74 @@
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
+			</plugin>
+
+			<!--
+			    Build-contract gate: lock Java/Maven floors and the reactor's coherence at `validate`,
+			    so a drift in toolchain or coordinates fails fast before anything compiles. Runs in
+			    every module (cheap, no network). dependencyConvergence is deliberately NOT enabled:
+			    the Spring Boot BOM legitimately resolves transitive diamonds that do not converge
+			    without exclusions, so requiring it would be a perpetually red gate, not a real signal.
+			-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-enforcer-plugin</artifactId>
+				<version>${maven-enforcer-plugin.version}</version>
+				<executions>
+					<execution>
+						<id>enforce-build-contract</id>
+						<phase>validate</phase>
+						<goals>
+							<goal>enforce</goal>
+						</goals>
+						<configuration>
+							<rules>
+								<requireJavaVersion>
+									<version>${enforcer.java.version}</version>
+								</requireJavaVersion>
+								<requireMavenVersion>
+									<version>${enforcer.maven.version}</version>
+								</requireMavenVersion>
+								<banDuplicatePomDependencyVersions/>
+								<reactorModuleConvergence/>
+								<requirePluginVersions>
+									<banLatest>true</banLatest>
+									<banRelease>true</banRelease>
+									<banSnapshots>true</banSnapshots>
+								</requirePluginVersions>
+							</rules>
+							<fail>true</fail>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+
+			<!--
+			    Supply-chain provenance: emit a CycloneDX SBOM for the whole reactor. makeAggregateBom is
+			    an aggregator goal, so it runs once at the root after every module is packaged and writes
+			    target/bom.json + target/bom.xml. inherited=false keeps child modules from each emitting a
+			    partial BOM; the aggregate is the artifact CI uploads.
+			-->
+			<plugin>
+				<groupId>org.cyclonedx</groupId>
+				<artifactId>cyclonedx-maven-plugin</artifactId>
+				<version>${cyclonedx-maven-plugin.version}</version>
+				<inherited>false</inherited>
+				<executions>
+					<execution>
+						<id>cyclonedx-aggregate-bom</id>
+						<phase>package</phase>
+						<goals>
+							<goal>makeAggregateBom</goal>
+						</goals>
+					</execution>
+				</executions>
+				<configuration>
+					<outputFormat>all</outputFormat>
+					<outputName>bom</outputName>
+					<projectType>application</projectType>
+					<schemaVersion>1.5</schemaVersion>
+				</configuration>
 			</plugin>
 		</plugins>
 	</build>
