@@ -40,7 +40,7 @@
 		<spotless.version>2.43.0</spotless.version>
 		<jacoco.version>0.8.12</jacoco.version>
 		<palantir-java-format.version>2.50.0</palantir-java-format.version>
-		<maven-enforcer-plugin.version>3.5.0</maven-enforcer-plugin.version>
+		<maven-enforcer-plugin.version>3.6.3</maven-enforcer-plugin.version>
 		<cyclonedx-maven-plugin.version>2.9.1</cyclonedx-maven-plugin.version>
 
 		<!-- Build-contract floors enforced by maven-enforcer at the validate phase -->
