@@ -1,0 +1,57 @@
+---
+# The genuinely separate partner-simulator service — its own image, its own pods, a real network
+# boundary the auth saga fails against. Reached by the in-cluster DNS name `partner-simulator:8081`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: partner-simulator
+  namespace: driftless
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: partner-simulator
+  template:
+    metadata:
+      labels:
+        app: partner-simulator
+    spec:
+      containers:
+        - name: partner-simulator
+          image: driftless/partner-simulator:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            initialDelaySeconds: 40
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: partner-simulator
+  namespace: driftless
+  labels:
+    app: partner-simulator
+spec:
+  selector:
+    app: partner-simulator
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081

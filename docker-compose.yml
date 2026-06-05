@@ -1,0 +1,106 @@
+# Driftless — Spec 09 one-command bring-up.
+#
+#   docker compose up --build        # build images + start the whole stack
+#
+# Brings up: postgres + the modular monolith (app) + the separate partner-simulator + Prometheus +
+# Grafana. The app reaches the partner-simulator BY SERVICE NAME over this network — a real network
+# hop to a genuinely separate container, never an in-process call. Flyway migrates every module's
+# schema on app startup. Open Grafana → "Zero Drift" (http://localhost:3000) and run
+# `./scripts/demo.sh 60 8 MIXED` (or `make demo`).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: driftless
+      POSTGRES_USER: driftless
+      POSTGRES_PASSWORD: driftless
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U driftless -d driftless"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  partner-simulator:
+    build:
+      context: .
+      dockerfile: partner-simulator/Dockerfile
+    image: driftless/partner-simulator:latest
+    ports:
+      - "8081:8081"
+    healthcheck:
+      # JRE image has no wget/curl; bash /dev/tcp needs no extra binary. Probe the listening port —
+      # Spring Boot opens it only once the context (incl. Flyway) is fully started.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8081"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  app:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    image: driftless/app:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      partner-simulator:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/driftless
+      SPRING_DATASOURCE_USERNAME: driftless
+      SPRING_DATASOURCE_PASSWORD: driftless
+      # The partner-simulator, reached by service name over the compose network (a real network hop).
+      AUTH_PARTNER_BASE_URL: http://partner-simulator:8081
+      DRIFTLESS_RECON_PARTNER_CONTROL_BASE_URL: http://partner-simulator:8081
+    ports:
+      - "8080:8080"
+    healthcheck:
+      # JRE image has no wget/curl; bash /dev/tcp needs no extra binary. Probe the listening port —
+      # Spring Boot opens it only once the context (incl. Flyway) is fully started.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=6h
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      app:
+        condition: service_started
+      partner-simulator:
+        condition: service_started
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      # Anonymous, read-only viewer so the zero-drift dashboard is reachable without login.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_DEFAULT_THEME: dark
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+
+volumes:
+  pgdata:

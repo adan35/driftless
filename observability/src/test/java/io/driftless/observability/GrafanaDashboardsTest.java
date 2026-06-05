@@ -33,10 +33,17 @@ class GrafanaDashboardsTest {
         assertThat(root.get("uid").asText()).isEqualTo("driftless-zero-drift");
         assertThat(root.path("panels").isArray()).isTrue();
 
-        // The flagship headline must read the zero-drift gauge.
-        assertThat(json).contains("driftless_recon_drift_amount");
+        // The flagship headline must read the EXACT exported gauge names (baseUnit suffix included),
+        // so a future rename or a doubled-unit suffix can never silently break the dashboard panels.
+        assertThat(json).contains("driftless_recon_drift_amount_minor_units");
+        assertThat(json).contains("driftless_ledger_signed_sum_abs_minor_units");
         assertThat(json).contains("driftless_recon_run_passed");
         assertThat(json).contains("driftless_auth_compensating_reversals_total");
+        // Guard against the historical mismatch regressing: the un-suffixed / doubled-suffix forms
+        // must not appear as standalone selectors.
+        assertThat(json).doesNotContain("driftless_recon_drift_amount)");
+        assertThat(json).doesNotContain("driftless_ledger_signed_sum_abs_minor)");
+        assertThat(json).doesNotContain("signed_sum_abs_minor_minor_units");
     }
 
     @Test

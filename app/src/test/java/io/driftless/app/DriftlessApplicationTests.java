@@ -2,6 +2,8 @@ package io.driftless.app;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.driftless.idempotency.api.IdempotencyGuard;
 import io.driftless.ledger.api.Ledger;
 import io.driftless.observability.metrics.MeteredLedger;
@@ -14,11 +16,17 @@ import io.driftless.rules.api.RuleEngine;
 import io.driftless.rules.api.VelocitySnapshot;
 import io.driftless.tokens.api.TokenService;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -135,9 +143,9 @@ class DriftlessApplicationTests {
 
         String body = prometheusRegistry.scrape();
         assertThat(body)
-                .contains("driftless_recon_drift_amount")
+                .contains("driftless_recon_drift_amount_minor_units")
                 .contains("driftless_ledger_entry_count")
-                .contains("driftless_ledger_signed_sum_abs_minor")
+                .contains("driftless_ledger_signed_sum_abs_minor_units")
                 .contains("driftless_outbox_pending_depth")
                 .contains("driftless_auth_dangling_partner_reverse")
                 .contains("driftless_auth_outstanding_partner_obligations")
@@ -146,6 +154,61 @@ class DriftlessApplicationTests {
                 .contains("driftless_rules_evaluation_seconds_bucket")
                 .contains("driftless_rules_decisions_total");
         assertThat(body).contains("jvm_memory_used_bytes");
+    }
+
+    /**
+     * Closes the dashboard / instrumentation drift gap (the "No data" defect): boots the monolith,
+     * scrapes {@code /actuator/prometheus} and asserts that EVERY {@code driftless_*} metric name the
+     * provisioned Grafana dashboards query is actually exported. Parses the panel PromQL straight out
+     * of the version-controlled JSON, so a future meter rename (or a doubled base-unit suffix) that
+     * leaves a panel selecting a non-existent series fails this test instead of silently rendering
+     * "No data". Non-{@code driftless_*} series (e.g. {@code http_server_requests_*}, partner targets)
+     * are out of scope here — they are owned by other targets and asserted elsewhere.
+     */
+    @Test
+    void everyDriftlessDashboardMetricIsActuallyExported() throws Exception {
+        // A rule evaluation makes the rule-engine histogram/decision series materialise before scrape.
+        ruleEngine.evaluate(new AuthContext(
+                io.driftless.common.id.AccountId.newId(),
+                io.driftless.common.money.Money.of(100L, "USD"),
+                "5411",
+                "merchant-1",
+                Instant.now(),
+                io.driftless.common.money.Money.of(100_000L, "USD"),
+                VelocitySnapshot.empty(io.driftless.common.money.Money.of(0L, "USD"))));
+
+        String body = prometheusRegistry.scrape();
+        Set<String> referenced = new LinkedHashSet<>();
+        Path dashboards = Path.of("..", "deploy", "grafana", "dashboards");
+        for (String file : List.of("zero-drift.json", "system-health.json")) {
+            referenced.addAll(driftlessMetricsReferencedBy(dashboards.resolve(file)));
+        }
+
+        assertThat(referenced)
+                .as("dashboards must query the zero-drift headline series by their exact exported names")
+                .contains("driftless_recon_drift_amount_minor_units", "driftless_ledger_signed_sum_abs_minor_units");
+        for (String metric : referenced) {
+            assertThat(body)
+                    .as("dashboard metric %s must be present in /actuator/prometheus", metric)
+                    .contains(metric);
+        }
+    }
+
+    /** Extract the distinct {@code driftless_*} metric names every panel target's PromQL references. */
+    private static Set<String> driftlessMetricsReferencedBy(Path dashboard) throws Exception {
+        JsonNode root = new ObjectMapper().readTree(Files.readString(dashboard));
+        Pattern metric = Pattern.compile("driftless_[a-z0-9_]+");
+        Set<String> names = new LinkedHashSet<>();
+        for (JsonNode panel : root.path("panels")) {
+            for (JsonNode target : panel.path("targets")) {
+                String expr = target.path("expr").asText("");
+                Matcher matcher = metric.matcher(expr);
+                while (matcher.find()) {
+                    names.add(matcher.group());
+                }
+            }
+        }
+        return names;
     }
 
     @Test

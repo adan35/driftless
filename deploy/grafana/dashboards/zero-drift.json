@@ -45,7 +45,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
-          "expr": "max(driftless_recon_drift_amount)"
+          "expr": "max(driftless_recon_drift_amount_minor_units)"
         }
       ]
     },
@@ -172,7 +172,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
-          "expr": "max(driftless_ledger_signed_sum_abs_minor)",
+          "expr": "max(driftless_ledger_signed_sum_abs_minor_units)",
           "legendFormat": "abs signed sum"
         }
       ]

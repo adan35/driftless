@@ -1,0 +1,16 @@
+# Keep the Docker build context small and reproducible: ship only the reactor sources + wrapper.
+**/target/
+.git/
+.github/
+.claude/
+.docs/
+docs/
+deploy/
+k8s/
+**/*.iml
+.idea/
+.vscode/
+*.log
+README.md
+**/README.md
+.DS_Store

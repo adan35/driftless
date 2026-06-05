@@ -238,6 +238,7 @@
 										<include>io.driftless.recon.internal</include>
 										<include>io.driftless.recon.internal.load</include>
 										<include>io.driftless.recon.internal.fault</include>
+										<include>io.driftless.recon.internal.demo</include>
 										<include>io.driftless.recon.web</include>
 									</includes>
 									<limits>

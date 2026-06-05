@@ -23,7 +23,7 @@ consistent `driftless_` prefix and meaningful labels:
 
 | Source | Metrics |
 |--------|---------|
-| **Reconciliation** | `driftless_recon_drift_amount` (gauge — the headline; should read 0), last-run timestamp, checks pass/fail, stuck-outbox count |
+| **Reconciliation** | `driftless_recon_drift_amount_minor_units` (gauge — the headline; should read 0), last-run timestamp, checks pass/fail, stuck-outbox count |
 | **Auth saga** | authorize/capture/reverse counts, decline rate, **compensating-reversal count**, partner-call latency, timeout count, saga-state distribution, dangling-partner-reverse + outstanding obligations |
 | **Rule engine** | evaluation latency histogram (so the **p99 single-digit-ms** claim is verifiable), decisions by reason code |
 | **Ledger** | postings/sec, rejected-unbalanced count, entry count |

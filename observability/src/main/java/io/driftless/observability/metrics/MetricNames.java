@@ -56,8 +56,13 @@ public final class MetricNames {
     /** Gauge: total committed {@code journal_entry} rows. */
     public static final String LEDGER_ENTRY_COUNT = "driftless.ledger.entry.count";
 
-    /** Gauge: Σ over currencies of |signed sum| in minor units — another zero-drift signal ({@code 0}). */
-    public static final String LEDGER_SIGNED_SUM_ABS = "driftless.ledger.signed.sum.abs.minor";
+    /**
+     * Gauge: Σ over currencies of |signed sum| — another zero-drift signal ({@code 0}). Carries the
+     * {@code minor_units} base unit, so Prometheus exports it exactly once as {@code
+     * driftless_ledger_signed_sum_abs_minor_units} (the meter name deliberately omits the unit to
+     * avoid a doubled {@code _minor} suffix).
+     */
+    public static final String LEDGER_SIGNED_SUM_ABS = "driftless.ledger.signed.sum.abs";
 
     // --- auth saga -------------------------------------------------------------------------------
     /** Counter: authorizations approved (the partner approved and the hold stands). */
