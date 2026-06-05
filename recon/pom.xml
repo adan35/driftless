@@ -11,9 +11,31 @@
 
 	<artifactId>recon</artifactId>
 	<name>recon</name>
-	<description>Reconciliation + load gen + fault harness + the zero-drift property test (Spec 07).
-		Scaffold at Spec 00: hosts the disabled property-test stub and its jqwik engine.</description>
+	<description>Reconciliation + reliability (Spec 07): a continuous balance-proof job over committed
+		ledger state, a load generator that drives the auth saga, a fault-injection harness, and the
+		non-negotiable zero-drift property test (THE GATE). This module INSPECTS the committed state of
+		ledger / idempotency-outbox / auth; it never edits the ledger to "fix" drift.</description>
 
+	<properties>
+		<!--
+		    Enforced coverage floor over the Spec 07 implementation packages (reconciliation service +
+		    load/fault tooling + web). The api package is frozen records/enums with no coverable logic and
+		    the thin persistence adapters carry no decision logic, mirroring the auth/tokens modules.
+		    Branch floor is 0.55: the reconciliation checks carry deliberate defensive branches (drift
+		    paths only hit by the fault/drift tests, plus null-guards) that are correct to keep.
+		-->
+		<coverage.line.min>0.80</coverage.line.min>
+		<coverage.branch.min>0.55</coverage.branch.min>
+	</properties>
+
+	<!--
+	    Recon is the one feature module that is, by design, a consumer of the others' committed state:
+	    it reconciles the ledger, inspects the outbox relay's backlog, and drives + inspects the auth
+	    saga. It therefore depends on common + ledger + idempotency (outbox status) + auth, integrating
+	    with the partner-simulator's control plane over HTTP only (no compile dependency on that
+	    separate service — recon declares its own control-plane wire DTOs, like auth does for the
+	    partner legs).
+	-->
 	<dependencies>
 		<dependency>
 			<groupId>io.driftless</groupId>
@@ -23,6 +45,57 @@
 			<groupId>io.driftless</groupId>
 			<artifactId>ledger</artifactId>
 		</dependency>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>idempotency</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>auth</artifactId>
+		</dependency>
+
+		<!-- Spec 07 implementation: Spring Data JPA + Flyway + PostgreSQL for the reconciliation_result table. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-jpa</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-flyway</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+		<!-- Thin REST surface (on-demand recon run/latest + RCA) plus the RestClient used for the control plane. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webmvc</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-validation</artifactId>
+		</dependency>
+		<!-- Canonical JSON for the persisted reconciliation result (checks/offenders) and control-plane bodies. -->
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>com.fasterxml.jackson.datatype</groupId>
+			<artifactId>jackson-datatype-jsr310</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+			<optional>true</optional>
+		</dependency>
 
 		<dependency>
 			<groupId>org.junit.jupiter</groupId>
@@ -30,14 +103,162 @@
 			<scope>test</scope>
 		</dependency>
 		<!--
-		    jqwik powers the property-based zero-drift gate. Wired now so the engine is on the
-		    classpath and the (disabled) stub is discovered; Spec 07 fills the property in.
+		    jqwik powers the property-based zero-drift gate. Wired so the engine is on the classpath and
+		    the property test is discovered and EXECUTED (no longer disabled).
 		-->
 		<dependency>
 			<groupId>net.jqwik</groupId>
 			<artifactId>jqwik</artifactId>
 			<scope>test</scope>
 		</dependency>
+
+		<!-- Integration tests run against real Postgres via Testcontainers and drive the real saga. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webmvc-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-testcontainers</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-postgresql</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-junit-jupiter</artifactId>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
+
+	<build>
+		<plugins>
+			<!--
+			    Integration tests (Testcontainers Postgres) are named *IT and run under Failsafe at
+			    `verify`; the jqwik property test and unit tests (*Test) run under Surefire at `test`.
+			    JaCoCo's agent argLine is appended so coverage spans both phases.
+			-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-failsafe-plugin</artifactId>
+				<configuration>
+					<argLine>${failsafeArgLine}</argLine>
+				</configuration>
+				<executions>
+					<execution>
+						<id>integration-tests</id>
+						<goals>
+							<goal>integration-test</goal>
+							<goal>verify</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>jacoco-prepare</id>
+						<goals>
+							<goal>prepare-agent</goal>
+						</goals>
+						<configuration>
+							<destFile>${project.build.directory}/jacoco.exec</destFile>
+						</configuration>
+					</execution>
+					<execution>
+						<id>jacoco-prepare-it</id>
+						<goals>
+							<goal>prepare-agent-integration</goal>
+						</goals>
+						<configuration>
+							<destFile>${project.build.directory}/jacoco-it.exec</destFile>
+							<propertyName>failsafeArgLine</propertyName>
+						</configuration>
+					</execution>
+					<execution>
+						<id>jacoco-merge</id>
+						<phase>post-integration-test</phase>
+						<goals>
+							<goal>merge</goal>
+						</goals>
+						<configuration>
+							<fileSets>
+								<fileSet>
+									<directory>${project.build.directory}</directory>
+									<includes>
+										<include>jacoco.exec</include>
+										<include>jacoco-it.exec</include>
+									</includes>
+								</fileSet>
+							</fileSets>
+							<destFile>${project.build.directory}/jacoco-merged.exec</destFile>
+						</configuration>
+					</execution>
+					<execution>
+						<id>jacoco-report</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+						<configuration>
+							<dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
+						</configuration>
+					</execution>
+					<!--
+					    Enforce per-PACKAGE so the gate bites on each Spec 07 core package: the
+					    reconciliation service (internal), the load generator (internal.load), the
+					    fault-injection harness (internal.fault) and the web surface. The frozen api
+					    records/enums, the config POJO (@ConfigurationProperties getters/setters) and the
+					    thin persistence adapters carry no decision logic worth gating. Mirrors auth/tokens.
+					-->
+					<execution>
+						<id>jacoco-check</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+						<configuration>
+							<dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
+							<rules>
+								<rule>
+									<element>PACKAGE</element>
+									<includes>
+										<include>io.driftless.recon.internal</include>
+										<include>io.driftless.recon.internal.load</include>
+										<include>io.driftless.recon.internal.fault</include>
+										<include>io.driftless.recon.web</include>
+									</includes>
+									<limits>
+										<limit>
+											<counter>LINE</counter>
+											<value>COVEREDRATIO</value>
+											<minimum>${coverage.line.min}</minimum>
+										</limit>
+										<limit>
+											<counter>BRANCH</counter>
+											<value>COVEREDRATIO</value>
+											<minimum>${coverage.branch.min}</minimum>
+										</limit>
+									</limits>
+								</rule>
+							</rules>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
 
 </project>

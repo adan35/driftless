@@ -44,4 +44,19 @@ public interface AuthorizationRepository extends JpaRepository<AuthorizationEnti
      * {@code COMPENSATING} that has not yet finished). Limited to keep each sweep bounded.
      */
     List<AuthorizationEntity> findByStatusAndUpdatedAtBefore(AuthorizationStatus status, Instant threshold);
+
+    /**
+     * Sum of {@code AUTHORIZED} authorization amounts per {@code (account, currency)} — the
+     * independent side of the hold cross-foot the {@link io.driftless.auth.spi.HoldReconView} exposes
+     * (each AUTHORIZED authorization should carry exactly one ACTIVE hold of its amount).
+     */
+    @Query(
+            """
+            SELECT new io.driftless.auth.internal.persistence.AccountCurrencyMinor(
+                a.accountId, a.currency, SUM(a.amountMinor))
+            FROM AuthorizationEntity a
+            WHERE a.status = io.driftless.auth.api.AuthorizationStatus.AUTHORIZED
+            GROUP BY a.accountId, a.currency
+            """)
+    List<AccountCurrencyMinor> authorizedAmountSumsByAccount();
 }

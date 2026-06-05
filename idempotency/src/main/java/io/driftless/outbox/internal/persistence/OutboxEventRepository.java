@@ -1,6 +1,7 @@
 package io.driftless.outbox.internal.persistence;
 
 import jakarta.persistence.LockModeType;
+import java.time.Instant;
 import java.util.List;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -35,4 +36,14 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEventEntity, 
 
     /** Count of events still awaiting delivery — used by tests and health checks. */
     long countByStatus(@Param("status") OutboxStatus status);
+
+    /**
+     * Count of events in a status appended strictly before {@code threshold} — the stuck-relay
+     * backlog the Spec 07 reconciliation job flags when {@code status} is {@code PENDING}.
+     */
+    long countByStatusAndOccurredAtBefore(OutboxStatus status, Instant threshold);
+
+    /** Up to {@code limit} events in a status appended before {@code threshold}, oldest first. */
+    List<OutboxEventEntity> findByStatusAndOccurredAtBeforeOrderByOccurredAtAsc(
+            OutboxStatus status, Instant threshold, Limit limit);
 }

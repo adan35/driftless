@@ -1,6 +1,8 @@
 package io.driftless.ledger.internal.persistence;
 
 import io.driftless.ledger.api.Direction;
+import io.driftless.ledger.spi.UnbalancedTransaction;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -58,4 +60,28 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntryEntity
     /** All distinct currencies that appear anywhere in the journal. */
     @Query("SELECT DISTINCT e.currency FROM JournalEntryEntity e")
     List<String> allCurrencies();
+
+    /**
+     * Every posted transaction whose legs do not net to zero in a currency, projected to {@link
+     * UnbalancedTransaction}. Empty for a correct ledger; the precise per-transaction offender list
+     * behind the Spec 07 reconciliation checks. Strictly stronger than the global sum: two unbalanced
+     * transactions that coincidentally offset still surface here individually.
+     */
+    @Query(
+            """
+            SELECT new io.driftless.ledger.spi.UnbalancedTransaction(
+                e.transaction.id,
+                e.currency,
+                SUM(CASE WHEN e.direction = io.driftless.ledger.api.Direction.DEBIT
+                         THEN e.amountMinor ELSE -e.amountMinor END))
+            FROM JournalEntryEntity e
+            GROUP BY e.transaction.id, e.currency
+            HAVING SUM(CASE WHEN e.direction = io.driftless.ledger.api.Direction.DEBIT
+                            THEN e.amountMinor ELSE -e.amountMinor END) <> 0
+            """)
+    List<UnbalancedTransaction> findUnbalancedTransactions();
+
+    /** Distinct accounts touched by the given transactions, to name implicated accounts for RCA. */
+    @Query("SELECT DISTINCT e.accountId FROM JournalEntryEntity e WHERE e.transaction.id IN :transactionIds")
+    List<UUID> findAccountsForTransactions(@Param("transactionIds") Collection<UUID> transactionIds);
 }
