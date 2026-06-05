@@ -1,0 +1,24 @@
+# Driftless — minimal Alertmanager configuration.
+#
+# This is a demo-grade routing config: it accepts the alerts Prometheus fires from
+# deploy/prometheus/alerts.yml and groups them. There is no real receiver wired (no PagerDuty/Slack/
+# email) because the reference stack has nowhere to page — the firing alerts are visible in the
+# Alertmanager UI (http://localhost:9093) and Prometheus (/alerts). Wire a real receiver here for a
+# production deployment.
+route:
+  receiver: default
+  group_by: ["alertname", "severity"]
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 1h
+
+receivers:
+  - name: default
+    # Intentionally empty: no external integration in the reference stack. Replace with a
+    # slack_configs / pagerduty_configs / webhook_configs block for real paging.
+
+inhibit_rules:
+  # A critical ledger-drift alert subsumes the lower-severity reconciliation/outbox noise.
+  - source_matchers: ['severity="critical"']
+    target_matchers: ['severity="warning"']
+    equal: ["stack"]

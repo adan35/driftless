@@ -13,6 +13,16 @@ global:
   external_labels:
     stack: driftless
 
+# Alerting rules turn the "drift stays at $0" claim into an alarm that fires (see alerts.yml).
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+# Route firing alerts to Alertmanager (the compose stack runs one as `alertmanager`).
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
 scrape_configs:
   - job_name: app
     metrics_path: /actuator/prometheus

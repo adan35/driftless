@@ -217,9 +217,13 @@ docs/             ADRs + frozen contract (local)
 
 ## License & status
 
-A reference implementation built spec-by-spec (see [`.claude/specs/`](./.claude/specs/)). The
-authorization saga, ledger, idempotency/outbox, rules, tokens, reconciliation gate, observability,
-and packaging are implemented and green under the property gate.
+Licensed under the **[Apache License 2.0](./LICENSE)**. A reference implementation built
+spec-by-spec (see [`.claude/specs/`](./.claude/specs/)). The authorization saga, ledger,
+idempotency/outbox, rules, tokens, reconciliation gate, observability, and packaging are implemented
+and green under the property gate.
+
+Contributions welcome — see [`CONTRIBUTING.md`](./CONTRIBUTING.md),
+[`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md), and the [security policy](./SECURITY.md).
 
 ---
 

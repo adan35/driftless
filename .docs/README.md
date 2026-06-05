@@ -14,6 +14,7 @@ business logic behind the code** — with worked examples throughout.
 | 02 | [Architecture & Structure](./02-architecture.md) | How is the project organized and why? How does a request flow? |
 | 03 | [Double-Entry Ledger](./03-double-entry-ledger.md) | The core accounting business logic, with a full worked example. |
 | 04 | [The Three Invariants](./04-invariants.md) | Balance / Immutability / Idempotency — how each is enforced in code. |
+| 05 | [Glossary](./05-glossary.md) | The domain vocabulary (hold vs posted vs available, MCC, compensating reversal, …). |
 
 ## Module deep-dives
 

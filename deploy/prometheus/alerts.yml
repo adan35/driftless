@@ -1,0 +1,82 @@
+# Driftless — Prometheus alerting rules.
+#
+# The whole pitch is "drift stays at $0". These rules make that an alarm that FIRES, not just a
+# dashboard you have to be watching. Loaded by prometheus.yml via `rule_files:` and routed to
+# Alertmanager. Metric names match what the app exports on /actuator/prometheus.
+groups:
+  - name: driftless-zero-drift
+    rules:
+      # The headline invariant. Any non-zero drift is a paging-grade incident: the books and reality
+      # disagree. `for: 0m` — there is no acceptable duration for drift.
+      - alert: LedgerDriftDetected
+        expr: max(driftless_recon_drift_amount_minor_units) != 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ledger drift detected (∑ journal entries != 0)"
+          description: "Reconciliation reports drift of {{ $value }} minor units. The ledger no longer sums to zero — investigate immediately via /reconciliation/latest and its RCA report. Never auto-edit the ledger; correct with a deliberate compensating entry."
+
+      # The reconciliation job itself failed a check (drift, hold, or outbox inconsistency).
+      - alert: ReconciliationFailing
+        expr: min(driftless_recon_run_passed) == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Reconciliation run is FAILING"
+          description: "The latest reconciliation run did not pass all checks. Inspect GET /reconciliation/latest for the offending accounts/transactions."
+
+      # A stuck outbox event means exactly-once propagation has stalled (reliability defect).
+      - alert: OutboxRelayStuck
+        expr: max(driftless_recon_stuck_outbox_count) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox has PENDING events older than the threshold"
+          description: "{{ $value }} outbox event(s) are stuck PENDING. The relay may be down or a poison event may be blocking the queue head."
+
+      # Outbox backlog growing — early warning before it becomes "stuck".
+      - alert: OutboxBacklogGrowing
+        expr: max(driftless_outbox_pending_depth) > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox pending depth is high"
+          description: "Pending outbox depth is {{ $value }}; the relay may not be keeping up with event production."
+
+  - name: driftless-saga-health
+    rules:
+      # A compensation finalized without a confirmed partner reverse — a possible partner-side
+      # dangling authorization. Should always read 0 after a healthy compensation.
+      - alert: DanglingPartnerReverse
+        expr: max(driftless_auth_dangling_partner_reverse) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Compensation finalized without a confirmed partner reverse"
+          description: "{{ $value }} authorization(s) reached a terminal state without a confirmed partner-side reversal. A partner-side authorization may be dangling."
+
+      # Outstanding partner obligations (rows stuck COMPENSATING) rising — the recovery sweep is not
+      # settling partner reverses. Sustained growth means the partner is unreachable.
+      - alert: OutstandingPartnerObligationsRising
+        expr: max(driftless_auth_outstanding_partner_obligations) > 50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outstanding partner-reverse obligations are high"
+          description: "{{ $value }} authorization(s) are awaiting a partner reverse via the recovery sweep. The partner may be degraded/unreachable."
+
+      # The app stopped exposing metrics / a scrape target is down.
+      - alert: TargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus target {{ $labels.job }} is down"
+          description: "{{ $labels.instance }} ({{ $labels.job }}) has been unreachable for 2 minutes."
