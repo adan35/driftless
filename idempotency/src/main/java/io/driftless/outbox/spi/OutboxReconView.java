@@ -18,6 +18,13 @@ public interface OutboxReconView {
     long countStuckPending(Instant olderThan);
 
     /**
+     * Total count of events still {@code PENDING} (the relay's current queue depth), regardless of
+     * age — the gauge the Spec 08 dashboard reads for outbox health. A healthy relay keeps this near
+     * zero; a sustained rise signals a wedged or lagging relay before any event becomes "stuck".
+     */
+    long countPending();
+
+    /**
      * Up to {@code limit} of the oldest stuck {@code PENDING} events (appended before {@code
      * olderThan}), oldest first, to name as offenders.
      */

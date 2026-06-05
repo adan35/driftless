@@ -72,7 +72,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class AuthorizationSaga {
+public class AuthorizationSaga implements io.driftless.auth.spi.SagaMetricsView {
 
     private static final String AUTHORIZE_SCOPE = "auth.authorize:";
     private static final String CAPTURE_SCOPE = "auth.capture:";
@@ -355,13 +355,22 @@ public class AuthorizationSaga {
      * REVERSED} without a confirmed partner reverse. Must read zero — a non-zero value flags a possible
      * dangling partner-side authorization. Spec 08 can surface this as a Micrometer gauge.
      */
+    @Override
     public long danglingPartnerReverseFinalizations() {
         return finalizer.danglingPartnerReverseFinalizations();
     }
 
     /** Operator/observability read: authorizations still {@code COMPENSATING} (outstanding partner reverses). */
+    @Override
     public long outstandingPartnerObligations() {
         return finalizer.outstandingPartnerObligations();
+    }
+
+    /** Observability read (Spec 08): how many authorizations are currently in {@code status}. */
+    @Override
+    @Transactional(readOnly = true)
+    public long authorizationsInStatus(AuthorizationStatus status) {
+        return authorizations.countByStatus(status);
     }
 
     static AuthorizationView toView(AuthorizationEntity auth) {

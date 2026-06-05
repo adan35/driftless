@@ -11,16 +11,69 @@
 
 	<artifactId>observability</artifactId>
 	<name>observability</name>
-	<description>Metrics wiring + dashboard provisioning (Spec 08). Scaffold only at Spec 00.</description>
+	<description>Spec 08: cross-cutting Micrometer instrumentation + Prometheus/Grafana provisioning.
+		The home for system-wide metrics — it reads every flow module through its published
+		api/spi and the outbox event stream, so the feature modules stay clean.</description>
 
 	<!--
-	    Observability wires metrics, not money math, so it depends on common only.
-	    Real code (Micrometer/Prometheus) is owned by Spec 08.
+	    Observability is a cross-cutting module that sits just below `app`. It depends on the PUBLISHED
+	    api/spi of each flow module (never their internals) so it can bind gauges and decorate the
+	    frozen contracts; no flow module depends on it, so there is no cycle. It moves no money.
 	-->
 	<dependencies>
 		<dependency>
 			<groupId>io.driftless</groupId>
 			<artifactId>common</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>ledger</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>idempotency</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>rules</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>auth</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>recon</artifactId>
+		</dependency>
+
+		<!-- Spring context wiring only (component scan, @EventListener, ObjectProvider). No web, no data. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter</artifactId>
+		</dependency>
+
+		<!-- Micrometer instrumentation API. The concrete Prometheus registry is supplied by `app`. -->
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-core</artifactId>
+		</dependency>
+
+		<!-- Parse the token-status-changed payload off the outbox stream to label the transition. -->
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+			<optional>true</optional>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
 		</dependency>
 	</dependencies>
 

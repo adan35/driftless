@@ -32,6 +32,12 @@ public class OutboxReconViewImpl implements OutboxReconView {
 
     @Override
     @Transactional(readOnly = true)
+    public long countPending() {
+        return events.countByStatus(OutboxStatus.PENDING);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<StuckOutboxEvent> findStuckPending(Instant olderThan, int limit) {
         return events
                 .findByStatusAndOccurredAtBeforeOrderByOccurredAtAsc(OutboxStatus.PENDING, olderThan, Limit.of(limit))

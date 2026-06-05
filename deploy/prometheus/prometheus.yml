@@ -1,0 +1,33 @@
+# Prometheus scrape configuration for Driftless (Spec 08).
+#
+# Targets are addressed by the service names Spec 09's docker-compose uses, so this file drops in
+# unchanged when the compose stack brings Prometheus up:
+#   - app:8080              the modular monolith, /actuator/prometheus
+#   - partner-simulator:8081 the separate partner service, /actuator/prometheus
+#
+# A 10s scrape interval keeps the zero-drift gauge and the compensating-reversal counter responsive
+# on the dashboard without overloading the targets.
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+  external_labels:
+    stack: driftless
+
+scrape_configs:
+  - job_name: app
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["app:8080"]
+        labels:
+          service: app
+
+  - job_name: partner-simulator
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["partner-simulator:8081"]
+        labels:
+          service: partner-simulator
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

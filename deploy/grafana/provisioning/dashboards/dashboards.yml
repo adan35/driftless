@@ -1,0 +1,15 @@
+# Grafana dashboard provider (Spec 08) — loads every dashboard JSON in /var/lib/grafana/dashboards
+# from version control at startup, so the "Zero Drift" and "System Health" dashboards appear with no
+# manual import. allowUiUpdates=false keeps them read-only / as-code.
+apiVersion: 1
+
+providers:
+  - name: driftless
+    orgId: 1
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -2,8 +2,12 @@ package io.driftless.outbox.internal;
 
 import io.driftless.outbox.internal.persistence.OutboxEventEntity;
 import io.driftless.outbox.internal.persistence.OutboxEventRepository;
+import io.driftless.outbox.spi.OutboxPublication;
+import io.driftless.outbox.spi.OutboxPublicationListener;
 import java.time.Clock;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,13 +30,21 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 class OutboxBatchPublisher {
 
+    private static final Logger log = LoggerFactory.getLogger(OutboxBatchPublisher.class);
+
     private final OutboxEventRepository events;
     private final EventPublisher publisher;
+    private final OutboxPublicationListener publicationListener;
     private final Clock clock;
 
-    OutboxBatchPublisher(OutboxEventRepository events, EventPublisher publisher, Clock clock) {
+    OutboxBatchPublisher(
+            OutboxEventRepository events,
+            EventPublisher publisher,
+            OutboxPublicationListener publicationListener,
+            Clock clock) {
         this.events = events;
         this.publisher = publisher;
+        this.publicationListener = publicationListener;
         this.clock = clock;
     }
 
@@ -53,6 +65,28 @@ class OutboxBatchPublisher {
                     event.getEventType(),
                     event.getPayloadJson(),
                     event.getOccurredAt()));
+            // Fan the same delivery out to the published observation seam (Spec 08), in id order and in
+            // this transaction. The listener dedups on the event id, so a crash-driven redelivery never
+            // double-counts. A no-op listener is wired by default, so this is a single unconditional call.
+            // The observation seam must never be able to break delivery: a misbehaving or future listener
+            // that throws is isolated per event — logged and swallowed — so the relay batch still commits
+            // and the event is marked published. Delivery integrity does not depend on a metrics listener.
+            try {
+                publicationListener.onPublished(new OutboxPublication(
+                        event.getId(),
+                        event.getAggregateType(),
+                        event.getAggregateId(),
+                        event.getEventType(),
+                        event.getPayloadJson(),
+                        event.getOccurredAt()));
+            } catch (RuntimeException ex) {
+                log.warn(
+                        "outbox publication listener failed for event {} ({}/{}) — continuing delivery",
+                        event.getId(),
+                        event.getAggregateType(),
+                        event.getEventType(),
+                        ex);
+            }
             event.markPublished(clock.instant());
         }
         return batch.size();

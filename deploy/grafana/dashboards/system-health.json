@@ -1,0 +1,172 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "graphTooltip": 0,
+  "title": "Driftless — System Health",
+  "uid": "driftless-system-health",
+  "tags": ["driftless", "system-health"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Ledger throughput — postings/sec & rejected-unbalanced/sec",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 15 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+          "expr": "sum(rate(driftless_ledger_postings_total[1m]))",
+          "legendFormat": "postings/s"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+          "expr": "sum(rate(driftless_ledger_rejected_unbalanced_total[1m]))",
+          "legendFormat": "rejected-unbalanced/s"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Rule engine evaluate latency p50 / p95 / p99 (single-digit ms target)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+          "expr": "histogram_quantile(0.50, sum(rate(driftless_rules_evaluation_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(driftless_rules_evaluation_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+          "expr": "histogram_quantile(0.99, sum(rate(driftless_rules_evaluation_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Auth saga outcomes/sec",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 15 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+          "expr": "sum(rate(driftless_auth_authorizations_total[5m]))",
+          "legendFormat": "authorized/s"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+          "expr": "sum(rate(driftless_auth_declines_total[5m]))",
+          "legendFormat": "declined/s"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+          "expr": "sum(rate(driftless_auth_captures_total[5m]))",
+          "legendFormat": "captured/s"
+        },
+        {
+          "refId": "D",
+          "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+          "expr": "sum(rate(driftless_auth_compensating_reversals_total[5m]))",
+          "legendFormat": "reversed/s"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Saga state distribution",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "none", "custom": { "drawStyle": "line", "fillOpacity": 20, "stacking": { "mode": "normal" } } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+          "expr": "max(driftless_auth_saga_state) by (status)",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Partner-leg latency p99 (partner-simulator http.server.requests)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{service=\"partner-simulator\", uri=~\"/partner.*\"}[5m])) by (le))",
+          "legendFormat": "partner p99"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "HTTP error rate (app 5xx/sec)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 15 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "driftless-prometheus" },
+          "expr": "sum(rate(http_server_requests_seconds_count{service=\"app\", status=~\"5..\"}[5m]))",
+          "legendFormat": "5xx/s"
+        }
+      ]
+    }
+  ]
+}

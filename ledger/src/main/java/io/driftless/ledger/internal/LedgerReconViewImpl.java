@@ -31,6 +31,12 @@ public class LedgerReconViewImpl implements LedgerReconView {
 
     @Override
     @Transactional(readOnly = true)
+    public long entryCount() {
+        return entries.count();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public long globalSignedSumMinor(String currency) {
         return entries.globalSignedSumMinor(currency);
     }

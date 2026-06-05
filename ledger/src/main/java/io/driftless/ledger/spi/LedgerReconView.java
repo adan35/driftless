@@ -24,6 +24,13 @@ public interface LedgerReconView {
     List<String> currencies();
 
     /**
+     * Total number of committed {@code journal_entry} rows — a monotonic, read-only count the Spec 08
+     * observability module surfaces as a gauge (ledger size / posting throughput via its rate). Never
+     * used for balance math, which is always derived by summation.
+     */
+    long entryCount();
+
+    /**
      * Signed global sum of every journal entry in a currency, in minor units (debits positive,
      * credits negative). For a correct ledger this is always {@code 0} — the seed of the zero-drift
      * proof.

@@ -24,6 +24,18 @@
 			<artifactId>spring-boot-starter-webmvc</artifactId>
 		</dependency>
 
+		<!-- Spec 08: actuator + Prometheus registry so Prometheus can scrape the simulator's own
+		     HTTP server metrics — this is where the partner-call latency is actually measured. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-actuator</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-registry-prometheus</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+
 		<!-- Bean validation (@Valid / @NotBlank / @Min …) on the partner and control DTOs. -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

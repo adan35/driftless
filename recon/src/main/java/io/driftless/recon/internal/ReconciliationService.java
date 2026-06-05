@@ -29,6 +29,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -56,6 +57,7 @@ public class ReconciliationService {
     private final ReconciliationResultRepository results;
     private final ObjectMapper objectMapper;
     private final ReconProperties properties;
+    private final ApplicationEventPublisher eventPublisher;
     private final Clock clock;
 
     public ReconciliationService(
@@ -65,6 +67,7 @@ public class ReconciliationService {
             ReconciliationResultRepository results,
             ObjectMapper objectMapper,
             ReconProperties properties,
+            ApplicationEventPublisher eventPublisher,
             Clock clock) {
         this.ledgerRecon = ledgerRecon;
         this.holdRecon = holdRecon;
@@ -72,6 +75,7 @@ public class ReconciliationService {
         this.results = results;
         this.objectMapper = objectMapper;
         this.properties = properties;
+        this.eventPublisher = eventPublisher;
         this.clock = clock;
     }
 
@@ -104,6 +108,11 @@ public class ReconciliationService {
         ReconciliationResult result =
                 new ReconciliationResult(UUID.randomUUID(), ranAt, passed, totalDriftMinor, checks, offenders);
         persist(result);
+
+        // Publish the structured result as a Spring application event so cross-cutting consumers (the
+        // Spec 08 observability module) can update the zero-drift gauges off the recon path without
+        // binding to this service. No listener is required; recon-only contexts simply ignore it.
+        eventPublisher.publishEvent(result);
 
         if (passed) {
             log.info("reconciliation {} PASSED currencies={} drift=0", result.id(), currencies.size());

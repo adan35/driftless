@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import io.driftless.outbox.internal.EventPublisher;
 import io.driftless.outbox.internal.LoggingEventPublisher;
+import io.driftless.outbox.spi.OutboxPublicationListener;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
@@ -33,6 +34,18 @@ public class IdempotencyAutoConfiguration {
     @ConditionalOnMissingBean(EventPublisher.class)
     public EventPublisher loggingEventPublisher() {
         return new LoggingEventPublisher();
+    }
+
+    /**
+     * Default no-op observation listener for the relay's published-event stream — yields to any
+     * application-supplied {@link OutboxPublicationListener} (Spec 08 wires one that maps the stream
+     * onto Micrometer counters). Keeping a single always-present bean lets the relay call it
+     * unconditionally rather than iterating a (possibly empty) collection.
+     */
+    @Bean
+    @ConditionalOnMissingBean(OutboxPublicationListener.class)
+    public OutboxPublicationListener noOpOutboxPublicationListener() {
+        return publication -> {};
     }
 
     /**
