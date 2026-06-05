@@ -11,9 +11,30 @@
 
 	<artifactId>auth</artifactId>
 	<name>auth</name>
-	<description>Auth/capture/reversal saga (Spec 03). Scaffold only at Spec 00.</description>
+	<description>Authorization lifecycle saga (Spec 03): authorize → capture → reversal with a real
+		available-vs-posted distinction, a bounded-timeout compensating reversal on partner
+		timeout/failure, and crash-safe recovery. Orchestrates rules → ledger (hold + settlement) →
+		partner-simulator under the Spec 02 idempotency guard and transactional outbox. Implements the
+		ledger HoldView SPI so available = posted - activeHoldTotal.</description>
 
-	<!-- Inward dependencies only; real code is owned by Spec 03. -->
+	<properties>
+		<!--
+		    Enforced coverage floor over the Spec 03 implementation packages (saga internals + web). The
+		    api package is frozen records/enums/exceptions with no coverable logic, and the persistence/
+		    event/partner/config sub-packages are thin adapters, mirroring how the idempotency, rules and
+		    tokens modules gate only their core logic packages. Branch floor is 0.70: the saga carries
+		    deliberate defensive branches (inside-transaction status re-checks that guard against a
+		    concurrent transition / recovery race) that are correct to keep but not all reachable.
+		-->
+		<coverage.line.min>0.85</coverage.line.min>
+		<coverage.branch.min>0.70</coverage.branch.min>
+	</properties>
+
+	<!--
+	    Strictly inward dependency direction: auth depends on common + the frozen ledger contract +
+	    Spec 02 (idempotency/outbox) + Spec 05 (rules) + Spec 06 (tokens). It integrates with the
+	    partner-simulator over HTTP only (no compile dependency on that separate service).
+	-->
 	<dependencies>
 		<dependency>
 			<groupId>io.driftless</groupId>
@@ -23,6 +44,209 @@
 			<groupId>io.driftless</groupId>
 			<artifactId>ledger</artifactId>
 		</dependency>
+		<!-- Spec 02 published contract: IdempotencyGuard + OutboxWriter/OutboxEvent (reused, not duplicated). -->
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>idempotency</artifactId>
+		</dependency>
+		<!-- Spec 05 published contract: RuleEngine + VelocityStore evaluated before placing a hold. -->
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>rules</artifactId>
+		</dependency>
+		<!-- Spec 06 published contract: TokenService, gating authorization on status == ACTIVE. -->
+		<dependency>
+			<groupId>io.driftless</groupId>
+			<artifactId>tokens</artifactId>
+		</dependency>
+
+		<!-- Spec 03 implementation: Spring Data JPA + Flyway + PostgreSQL for the authorization/hold tables. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-jpa</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-flyway</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+		<!-- Thin REST surface (routing/serialization) plus the RestClient used for the partner call. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webmvc</artifactId>
+		</dependency>
+		<!-- Input validation on the request DTOs (@NotBlank account, @Min amount). -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-validation</artifactId>
+		</dependency>
+		<!-- Canonical JSON for the stored idempotent result, outbox payloads and partner state parsing. -->
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>com.fasterxml.jackson.datatype</groupId>
+			<artifactId>jackson-datatype-jsr310</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+			<optional>true</optional>
+		</dependency>
+
+		<!-- Integration tests run against real Postgres via Testcontainers + @ServiceConnection. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webmvc-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-testcontainers</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-postgresql</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-junit-jupiter</artifactId>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
+
+	<build>
+		<plugins>
+			<!--
+			    Integration tests (Testcontainers Postgres) are named *IT and run under Failsafe at
+			    `verify`; unit tests (*Test) run under Surefire at `test`. JaCoCo's agent argLine is
+			    appended so coverage spans both phases.
+			-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-failsafe-plugin</artifactId>
+				<configuration>
+					<argLine>${failsafeArgLine}</argLine>
+				</configuration>
+				<executions>
+					<execution>
+						<id>integration-tests</id>
+						<goals>
+							<goal>integration-test</goal>
+							<goal>verify</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>jacoco-prepare</id>
+						<goals>
+							<goal>prepare-agent</goal>
+						</goals>
+						<configuration>
+							<destFile>${project.build.directory}/jacoco.exec</destFile>
+						</configuration>
+					</execution>
+					<execution>
+						<id>jacoco-prepare-it</id>
+						<goals>
+							<goal>prepare-agent-integration</goal>
+						</goals>
+						<configuration>
+							<destFile>${project.build.directory}/jacoco-it.exec</destFile>
+							<propertyName>failsafeArgLine</propertyName>
+						</configuration>
+					</execution>
+					<execution>
+						<id>jacoco-merge</id>
+						<phase>post-integration-test</phase>
+						<goals>
+							<goal>merge</goal>
+						</goals>
+						<configuration>
+							<fileSets>
+								<fileSet>
+									<directory>${project.build.directory}</directory>
+									<includes>
+										<include>jacoco.exec</include>
+										<include>jacoco-it.exec</include>
+									</includes>
+								</fileSet>
+							</fileSets>
+							<destFile>${project.build.directory}/jacoco-merged.exec</destFile>
+						</configuration>
+					</execution>
+					<execution>
+						<id>jacoco-report</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+						<configuration>
+							<dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
+						</configuration>
+					</execution>
+					<!--
+					    Enforce per-PACKAGE so the gate bites on each Spec 03 core package (the frozen api
+					    package and the thin persistence/event/partner/config adapters carry no decision
+					    logic worth gating). Mirrors the idempotency and tokens modules.
+					-->
+					<execution>
+						<id>jacoco-check</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+						<configuration>
+							<dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
+							<rules>
+								<rule>
+									<element>PACKAGE</element>
+									<includes>
+										<include>io.driftless.auth.internal</include>
+										<include>io.driftless.auth.web</include>
+									</includes>
+									<limits>
+										<limit>
+											<counter>LINE</counter>
+											<value>COVEREDRATIO</value>
+											<minimum>${coverage.line.min}</minimum>
+										</limit>
+										<limit>
+											<counter>BRANCH</counter>
+											<value>COVEREDRATIO</value>
+											<minimum>${coverage.branch.min}</minimum>
+										</limit>
+									</limits>
+								</rule>
+							</rules>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
 
 </project>
