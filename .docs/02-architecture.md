@@ -147,9 +147,36 @@ idempotent, a *late* partner success arriving after compensation is absorbed wit
 ## 6. Quality gates (CI)
 
 - **Spotless** (palantir-java-format) — formatting gate.
-- **JaCoCo** — per-module line-coverage minimums where logic exists.
+- **JaCoCo** — per-module line/branch-coverage minimums where logic exists.
 - **Property-based invariant test** (`recon` / jqwik) — the non-negotiable gate: for random
-  sequences of `auth/capture/reversal/fault`, `∑ journal entries == 0`.
+  **sequential and concurrent, multi-currency** sequences of `auth/capture/reversal/fault`,
+  `∑ journal entries == 0` per currency, no double-effect, no dangling hold.
 - **Testcontainers** integration tests — real Postgres, real triggers/constraints.
+- **ArchUnit** — fails the build if any module reaches into another module's `internal`/`web`
+  (modules integrate only through `api`/`spi` + `common`), or if a package cycle appears. The one
+  intentional, documented exception is the in-process saga load/demo harness in `recon`.
+- **maven-enforcer** — locks Java 21 / Maven floor, bans duplicate dependency versions, requires
+  reactor module convergence and pinned plugin versions.
+- **CycloneDX SBOM** + CI **Trivy** image scan + **Dependabot** / dependency-review — supply-chain
+  provenance and vulnerability surfacing.
 
 Run locally: `./mvnw verify` (needs a running Docker daemon for Testcontainers).
+
+## 7. Public REST surface
+
+The modular monolith (`app`) exposes a documented, idempotent REST API (browsable as OpenAPI at
+`/swagger-ui` / `/openapi.yaml`):
+
+| Area | Endpoints |
+|------|-----------|
+| Accounts | `POST /accounts` (open), `POST /accounts/{id}/funding` (balanced load), `GET /accounts/{id}`, `GET /accounts/{id}/balance` (posted + available) |
+| Statements | `GET /accounts/{id}/statement?after=&limit=` — **keyset/seek** pagination over the immutable journal (stable under appends, no `OFFSET`) |
+| Authorizations | `POST /authorizations`, `POST /authorizations/{id}/capture`, `POST /authorizations/{id}/reverse`, `GET /authorizations/{id}` |
+| Tokens | `POST /tokens` + `activate`/`suspend`/`resume`/`deactivate`, `GET /tokens/{id}` |
+| Reconciliation | `POST /reconciliation/run`, `GET /reconciliation/latest`, `GET /reconciliation/{id}[/rca]` |
+| Ops | `/actuator/health`, `/actuator/prometheus` |
+
+Every mutating endpoint takes an `Idempotency-Key` (missing ⇒ 400, same key + different body ⇒ 409,
+replay ⇒ original 2xx). Errors are RFC-7807 `ProblemDetail` with a stable machine-readable `code`
+(e.g. `BALANCE_INVARIANT_VIOLATION`, `IDEMPOTENCY_CONFLICT`, `ACCOUNT_NOT_FOUND`,
+`CURRENCY_MISMATCH`). Money is always integer minor units.

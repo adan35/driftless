@@ -173,15 +173,31 @@ it).
 
 Kubernetes manifests are an **optional stretch** under [`k8s/`](./k8s/) — not the MVP path.
 
+## Explore the API
+
+The modular monolith exposes a documented, idempotent REST surface — browsable as OpenAPI:
+
+- **Swagger UI:** http://localhost:8080/swagger-ui · **spec:** `GET /openapi.yaml`
+  (also committed at [`deploy/openapi/openapi.yaml`](./deploy/openapi/openapi.yaml)).
+- **Move money through it:** `POST /accounts` → `POST /accounts/{id}/funding` (a balanced load) →
+  `POST /authorizations` → `…/capture` or `…/reverse`; read `GET /accounts/{id}/balance` (posted +
+  available) and `GET /accounts/{id}/statement?after=&limit=` (keyset-paginated journal).
+- Every mutating call takes an `Idempotency-Key`; errors are RFC-7807 with a stable `code`.
+
+Operationally, drift is an **alarm that fires** (`deploy/prometheus/alerts.yml`), not just a panel —
+see the [operations runbook](./.docs/06-runbook.md).
+
 ## Build & test locally
 
 ```bash
-./mvnw verify     # full reactor: Spotless + JaCoCo + the zero-drift property gate
+./mvnw verify     # full reactor: Spotless + JaCoCo + ArchUnit + enforcer + the zero-drift gate
 ```
 
 Integration tests use **Testcontainers** (real Postgres, real triggers/constraints), so a running
 Docker daemon is required. The CI gate (`recon/.../LedgerInvariantPropertyTest`) runs the property
-test on every build.
+test — now **sequential, concurrent, and multi-currency** — on every build. CI also enforces module
+boundaries (ArchUnit), the build contract (maven-enforcer), and supply-chain provenance (CycloneDX
+SBOM + Trivy image scan + Dependabot).
 
 - **Stack:** Java 21, Spring Boot 4, Maven multi-module, PostgreSQL + Flyway, Micrometer/Prometheus,
   Grafana, Docker Compose.

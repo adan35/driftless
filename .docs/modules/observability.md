@@ -74,7 +74,10 @@ dashboard is honest and not just painting green.
 
 A version-controlled Prometheus config scrapes both `app` and the separate `partner-simulator` (both
 expose `/actuator/prometheus`), so the dashboard sees the whole system including the real network
-leg.
+leg. **Alerting rules** (`deploy/prometheus/alerts.yml`) turn "drift stays at $0" into an alarm that
+*fires*: `LedgerDriftDetected` (`drift_amount != 0`), `ReconciliationFailing`, `OutboxRelayStuck`,
+`DanglingPartnerReverse`, `OutstandingPartnerObligationsRising`, and `TargetDown` — routed to an
+Alertmanager container. See the [runbook](../06-runbook.md) for what each means and how to respond.
 
 ## How this is wired to run
 
