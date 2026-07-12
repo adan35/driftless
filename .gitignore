@@ -35,3 +35,6 @@ build/
 ### Transient agent / test artifacts (kept local) ###
 .claude/*.log
 **/.jqwik-database
+
+### Generated knowledge graph output ###
+graphify-out/
