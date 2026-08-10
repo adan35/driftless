@@ -49,7 +49,7 @@
 
 		<!-- Dependency versions not managed by the Spring Boot BOM -->
 		<jqwik.version>1.10.1</jqwik.version>
-		<archunit.version>1.4.2</archunit.version>
+		<archunit.version>1.5.0</archunit.version>
 
 		<!-- common minimum line coverage; raised per-module where logic exists -->
 		<coverage.line.min>0.00</coverage.line.min>
